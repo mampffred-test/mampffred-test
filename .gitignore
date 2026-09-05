@@ -24,6 +24,9 @@
 # local review and security-audit artifacts
 /audit-mobile-planner.png
 /SECURITY-REMEDIATION.md
+/INTERNAL-TODO.md
+/ROADMAP.md
+/TODO.md
 
 # debug
 npm-debug.log*
@@ -35,6 +38,7 @@ yarn-error.log*
 .env*
 
 # deployment and generated files
+/.openai/
 .vercel
 next-env.d.ts
 /dist/
