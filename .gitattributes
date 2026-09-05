@@ -6,3 +6,4 @@
 *.webp binary
 *.woff binary
 *.woff2 binary
+lib/data/bls-4.0.min.json binary
