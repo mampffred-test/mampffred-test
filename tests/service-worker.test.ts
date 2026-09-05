@@ -3,8 +3,19 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 
+type TestWorkerEvent = {
+  request?: {
+    method: string;
+    mode?: string;
+    destination?: string;
+    url: string;
+  };
+  respondWith?: (work: Promise<unknown>) => void;
+  waitUntil: (work: Promise<void>) => void;
+};
+
 function harness(source: string) {
-  const listeners: Record<string, (event: any) => void> = {};
+  const listeners: Record<string, (event: TestWorkerEvent) => void> = {};
   const puts: string[] = [],
     deleted: string[] = [],
     navigated: string[] = [];
@@ -38,7 +49,7 @@ function harness(source: string) {
           },
         })),
     },
-    addEventListener: (type: string, cb: (event: any) => void) => {
+    addEventListener: (type: string, cb: (event: TestWorkerEvent) => void) => {
       listeners[type] = cb;
     },
   };

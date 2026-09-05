@@ -6,6 +6,10 @@ import { readFile } from 'node:fs/promises';
 import { resolve, relative, extname } from 'node:path';
 import { createRequire } from 'node:module';
 import ts from 'typescript';
+import {
+  createSharedRecipeUrl,
+  parseSharedRecipe,
+} from '../lib/recipe-sharing.ts';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = process.cwd();
@@ -216,6 +220,194 @@ try {
     'PASS: mobile Chromium production startup, service-worker registration and offline reload',
   );
   await context.setOffline(false);
+  const storedRecipes = () =>
+    app.evaluate(
+      () =>
+        new Promise((resolve, reject) => {
+          const request = indexedDB.open('mampffred');
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const db = request.result;
+            const tx = db.transaction('app');
+            const read = tx.objectStore('app').get('state');
+            read.onsuccess = () => resolve(read.result.recipes);
+            tx.oncomplete = () => db.close();
+          };
+        }),
+    );
+  const initialRecipeCount = (await storedRecipes()).length;
+  await app
+    .getByRole('navigation', { name: 'Hauptnavigation' })
+    .getByRole('button', { name: 'Rezepte', exact: true })
+    .click();
+  await app.evaluate(() => {
+    window.__shareMode = 'success';
+    window.__clipboardBlocked = false;
+    window.__clipboardWrites = [];
+    Object.defineProperty(navigator, 'share', {
+      configurable: true,
+      value: async (data) => {
+        window.__lastShare = {
+          ...data,
+          active: navigator.userActivation.isActive,
+        };
+        if (window.__shareMode !== 'success')
+          throw new DOMException('Simulated native result', window.__shareMode);
+      },
+    });
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text) => {
+          if (window.__clipboardBlocked)
+            throw new DOMException(
+              'Simulated clipboard denial',
+              'NotAllowedError',
+            );
+          window.__clipboardWrites.push(text);
+        },
+      },
+    });
+  });
+  await app
+    .getByText('Haferporridge mit Beeren', { exact: true })
+    .first()
+    .click();
+  await app.getByRole('button', { name: 'Rezept teilen', exact: true }).click();
+  const shared = await app.evaluate(() => window.__lastShare);
+  assert.equal(
+    shared.active,
+    true,
+    'native share must be called within click activation',
+  );
+  assert.match(shared.url, /#recipe=gzip\./);
+  await app.evaluate(() => {
+    window.__shareMode = 'AbortError';
+  });
+  await app.getByRole('button', { name: 'Rezept teilen', exact: true }).click();
+  assert.deepEqual(await app.evaluate(() => window.__clipboardWrites), []);
+  await app.evaluate(() => {
+    window.__shareMode = 'NotAllowedError';
+    window.__clipboardBlocked = true;
+  });
+  await app.getByRole('button', { name: 'Rezept teilen', exact: true }).click();
+  const copyDialog = app.getByRole('dialog', {
+    name: 'Rezeptlink kopieren',
+    exact: true,
+  });
+  await copyDialog.waitFor();
+  assert.match(
+    await copyDialog
+      .getByRole('textbox', { name: 'Rezeptlink', exact: true })
+      .inputValue(),
+    /#recipe=gzip\./,
+  );
+  await copyDialog
+    .getByRole('button', { name: 'Link kopieren', exact: true })
+    .click();
+  await copyDialog.getByRole('status').waitFor();
+  await app.evaluate(() => {
+    window.__clipboardBlocked = false;
+  });
+  await copyDialog
+    .getByRole('button', { name: 'Link kopieren', exact: true })
+    .click();
+  await copyDialog.waitFor({ state: 'hidden' });
+  assert.equal((await app.evaluate(() => window.__clipboardWrites)).length, 1);
+  const downloadReady = app.waitForEvent('download');
+  await app
+    .getByRole('button', { name: 'Als Rezeptdatei sichern', exact: true })
+    .click();
+  const download = await downloadReady;
+  assert.match(
+    download.suggestedFilename(),
+    /^mampffred-.+\.mampffred-rezept$/,
+  );
+  const exportedBytes = await readFile(await download.path());
+  const exported = await parseSharedRecipe(exportedBytes.toString());
+  assert.equal(exported.name, 'Haferporridge mit Beeren');
+  await app.getByRole('button', { name: 'Zurück', exact: true }).click();
+  const importFile = () =>
+    app
+      .locator('input[accept*=".mampffred-rezept"]')
+      .setInputFiles({
+        name: download.suggestedFilename(),
+        mimeType: 'application/json',
+        buffer: exportedBytes,
+      });
+  const preview = app
+    .getByRole('dialog')
+    .filter({ hasText: 'Mit dir über Mampffred geteilt' });
+  await importFile();
+  await preview.waitFor();
+  assert.equal(
+    (await storedRecipes()).length,
+    initialRecipeCount,
+    'file preview must not save',
+  );
+  await preview.getByRole('button', { name: 'Abbrechen', exact: true }).click();
+  assert.equal((await storedRecipes()).length, initialRecipeCount);
+  await importFile();
+  await preview
+    .getByRole('button', { name: 'Rezept hinzufügen', exact: true })
+    .click();
+  await preview.waitFor({ state: 'hidden' });
+  assert.equal((await storedRecipes()).length, initialRecipeCount + 1);
+  await app.getByRole('button', { name: 'Zurück', exact: true }).click();
+  await app.evaluate((url) => {
+    window.location.hash = new URL(url).hash;
+  }, shared.url);
+  await preview.waitFor();
+  await app.waitForFunction(() => window.location.hash === '');
+  await preview
+    .getByRole('button', { name: 'Rezept hinzufügen', exact: true })
+    .click();
+  await preview.waitFor({ state: 'hidden' });
+  assert.equal(
+    (await storedRecipes()).length,
+    initialRecipeCount + 1,
+    'link/file reimport must deduplicate',
+  );
+  await app.getByRole('button', { name: 'Zurück', exact: true }).click();
+  const longEnvelope = JSON.parse(exportedBytes.toString());
+  longEnvelope.recipe.name = 'L'.repeat(200);
+  longEnvelope.recipe.description = 'D'.repeat(5000);
+  const longLink = await createSharedRecipeUrl(
+    JSON.stringify(longEnvelope),
+    origin,
+  );
+  await app.setViewportSize({ width: 844, height: 390 });
+  await app.evaluate((url) => {
+    window.location.hash = new URL(url).hash;
+  }, longLink);
+  await preview.waitFor();
+  const previewBounds = await preview.boundingBox();
+  assert.ok(
+    previewBounds.y >= 0 && previewBounds.y + previewBounds.height <= 390,
+    'preview stays inside landscape viewport',
+  );
+  await preview
+    .getByRole('button', { name: 'Abbrechen', exact: true })
+    .scrollIntoViewIfNeeded();
+  await app.screenshot({
+    path: 'outputs/security/share-preview-landscape.png',
+  });
+  await preview.getByRole('button', { name: 'Abbrechen', exact: true }).click();
+  await app.setViewportSize({ width: 390, height: 844 });
+  await app.evaluate(() => {
+    window.location.hash = 'recipe=gzip.invalid';
+  });
+  await app
+    .getByText('Dieser Rezeptlink ist ungültig oder unvollständig.', {
+      exact: true,
+    })
+    .waitFor();
+  await app.waitForFunction(() => window.location.hash === '');
+  assert.equal((await storedRecipes()).length, initialRecipeCount + 1);
+  assert.equal(errors.length, 0, errors.join('\n'));
+  console.log(
+    'PASS: share activation, abort, clipboard retry, actual file download, preview/cancel/confirm, link/file deduplication, malformed link and landscape layout',
+  );
   await app
     .getByRole('button', { name: 'Rezept hinzufügen', exact: true })
     .click();
@@ -353,12 +545,21 @@ try {
   );
   await app.reload();
   await app
-    .locator('input[accept=".mampffred-rezept,application/json"]')
+    .getByRole('navigation', { name: 'Hauptnavigation' })
+    .getByRole('button', { name: 'Rezepte', exact: true })
+    .click();
+  await app
+    .locator('input[accept*=".mampffred-rezept"]')
     .setInputFiles({
       name: 'extra.mampffred-rezept',
       mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify(importEnvelope)),
     });
+  await app
+    .getByRole('dialog')
+    .filter({ hasText: 'Mit dir über Mampffred geteilt' })
+    .getByRole('button', { name: 'Rezept hinzufügen', exact: true })
+    .click();
   await app
     .getByRole('alert')
     .filter({ hasText: 'höchstens 1.000 Rezepte' })

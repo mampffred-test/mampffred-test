@@ -1,3 +1,4 @@
+import { sanitizeImportedData } from './imported-text.ts';
 import type { AppData } from './model';
 import { migrateAppData } from './model.ts';
 
@@ -101,7 +102,10 @@ export function dataUrlToBlob(dataUrl: string) {
   return new Blob([base64ToBytes(match[2])], { type: match[1] });
 }
 
-function validateBackupPayload(value: unknown): BackupPayload {
+function validateBackupPayload(
+  value: unknown,
+  imported = false,
+): BackupPayload {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('INVALID_PAYLOAD');
   const candidate = value as Partial<BackupPayload>;
@@ -111,7 +115,11 @@ function validateBackupPayload(value: unknown): BackupPayload {
     Array.isArray(candidate.images)
   )
     throw new Error('INVALID_PAYLOAD');
-  const data = migrateAppData(candidate.data);
+  // Eine Sicherungsdatei kann von fremder Seite stammen. Sie durchläuft deshalb
+  // dieselbe Texthygiene wie ein geteilter Rezeptlink, bevor validiert wird.
+  const data = migrateAppData(
+    imported ? sanitizeImportedData(candidate.data) : candidate.data,
+  );
   const imageKeys = new Set(
     [...data.recipes, ...data.recipeDrafts].flatMap((recipe) =>
       recipe.imageKey ? [recipe.imageKey] : [],
@@ -271,7 +279,7 @@ export async function decryptBackup(
   if (plaintext.byteLength > MAX_BACKUP_PLAINTEXT_BYTES)
     throw new Error('INVALID_PAYLOAD');
   const decoded = JSON.parse(new TextDecoder().decode(plaintext)) as unknown;
-  const { data: validatedData, images } = validateBackupPayload(decoded);
+  const { data: validatedData, images } = validateBackupPayload(decoded, true);
   const data = quarantineImportedData(validatedData);
   if (data.lastBackup !== envelope.createdAt)
     throw new Error('INVALID_PAYLOAD');

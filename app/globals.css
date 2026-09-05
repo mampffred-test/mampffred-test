@@ -163,7 +163,7 @@ select:focus-visible {
   margin: 0;
   color: var(--muted);
   font-size: 0.78rem;
-  text-transform: capitalize;
+  text-transform: none;
 }
 .header-mascot {
   width: 46px;
@@ -1386,7 +1386,7 @@ select:focus-visible {
   gap: 8px;
   margin-top: 22px;
 }
-.detail-actions > button:last-child,
+.detail-actions > button,
 .backup-settings > button:not(.primary-button) {
   min-height: 46px;
   display: flex;
@@ -2716,6 +2716,92 @@ select:focus-visible {
 .dialog-actions .primary-button:disabled {
   opacity: 0.5;
 }
+.shared-recipe-dialog {
+  gap: 9px;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.shared-recipe-dialog > textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+}
+.shared-recipe-dialog > small {
+  color: var(--green);
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+.shared-recipe-dialog > p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.shared-recipe-meta {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 13px;
+  padding: 10px;
+  border-radius: 12px;
+  background: #eef3df;
+  color: var(--green-dark);
+}
+.shared-recipe-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+/* Name und Vorschau stammen aus einem fremden Link: begrenzte Höhe, harte
+   Umbrüche und ein Herkunftshinweis, damit kein fremder Text die Dialogfläche
+   übernimmt. */
+.shared-recipe-dialog > h2 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+.shared-recipe-preview {
+  width: 100%;
+  max-height: 168px;
+  overflow-y: auto;
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  text-align: left;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.shared-recipe-preview strong {
+  font-size: 0.7rem;
+  font-weight: 750;
+  color: var(--green-dark);
+}
+.shared-recipe-preview ul,
+.shared-recipe-preview ol {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 17px;
+}
+.shared-recipe-preview small {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+.shared-recipe-dialog > .shared-recipe-origin {
+  display: block;
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
 .backup-dialog .modal-header {
   justify-content: flex-start;
 }
@@ -3249,58 +3335,20 @@ select:focus-visible {
 .backup-card-leaves {
   position: absolute;
   z-index: 0;
-  top: -3px;
-  right: -1px;
-  width: 88px;
-  height: 60px;
+  top: -7px;
+  right: -8px;
+  width: 94px;
+  height: 70px;
   pointer-events: none;
   user-select: none;
 }
-.backup-card-leaf {
-  position: absolute;
-  overflow: hidden;
-  filter: drop-shadow(0 3px 5px rgb(45 75 26 / 14%));
-}
-.backup-card-leaf img {
-  position: absolute;
-  width: 88px;
-  max-width: none;
+.backup-card-leaves img {
+  display: block;
+  width: 100%;
   height: auto;
+  transform: rotate(4deg);
+  filter: drop-shadow(0 3px 5px rgb(45 75 26 / 14%));
   user-select: none;
-}
-.backup-card-leaf-top {
-  top: -9px;
-  left: 21px;
-  width: 50px;
-  height: 30px;
-  transform: rotate(-24deg);
-}
-.backup-card-leaf-top img {
-  top: -1px;
-  left: -37px;
-}
-.backup-card-leaf-right {
-  top: 7px;
-  right: -2px;
-  width: 43px;
-  height: 39px;
-  transform: rotate(72deg);
-}
-.backup-card-leaf-right img {
-  top: -25px;
-  left: -20px;
-}
-.backup-card-leaf-left {
-  top: 24px;
-  left: 5px;
-  width: 38px;
-  height: 25px;
-  transform: rotate(-24deg);
-}
-.backup-card-leaf-left img {
-  top: -49px;
-  left: -1px;
-  width: 110px;
 }
 .backup-card button {
   position: relative;
@@ -5098,4 +5146,8 @@ select:focus-visible {
   color: #54201d;
   box-shadow: 0 4px 24px #0003;
 }
-.data-error-banner button { display: block; margin-top: 10px; text-decoration: underline; }
+.data-error-banner button {
+  display: block;
+  margin-top: 10px;
+  text-decoration: underline;
+}

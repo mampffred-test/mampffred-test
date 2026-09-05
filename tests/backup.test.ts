@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { File } from 'node:buffer';
 import test from 'node:test';
 
 import { decryptBackup, encryptBackup } from '../lib/backup.ts';
@@ -246,4 +245,70 @@ test('sichert Entwürfe und eigene Lebensmittel im verschlüsselten Export', asy
   assert.equal(restored.preview.imageCount, 1);
   assert.equal(restored.payload.data.recipeDrafts[0]?.id, 'entwurf-1');
   assert.equal(restored.payload.data.customFoods[0]?.name, 'Mein Reis');
+});
+
+test('eine fremde Sicherung schleust keine Steuer- oder Bidi-Zeichen ein', async () => {
+  const data = createSeedData();
+  data.recipes[0].name = 'Auflauf\u202Egnp.exe\u202C';
+  data.recipes[0].description = 'Erste Zeile\r\nZweite\u200BZeile';
+  data.recipes[0].steps = ['Backen \u{1F468}‍\u{1F373} und servieren'];
+  const blob = await encryptBackup({ data, images: {} }, password);
+
+  const { payload } = await decryptBackup(
+    new File([blob], 'fremde-sicherung.mampffred'),
+    password,
+  );
+
+  assert.equal(payload.data.recipes[0].name, 'Auflaufgnp.exe');
+  assert.equal(payload.data.recipes[0].description, 'Erste Zeile\nZweiteZeile');
+  // Emoji-Sequenzen bleiben unangetastet: U+200D trägt hier Bedeutung.
+  assert.equal(
+    payload.data.recipes[0].steps[0],
+    'Backen \u{1F468}‍\u{1F373} und servieren',
+  );
+});
+
+test('verschlüsselt eigene Texte unverändert und bereinigt erst beim Import', async () => {
+  const data = createSeedData();
+  const original = `Eigener Text${String.fromCodePoint(0x200e)} mit Richtung`;
+  data.recipes[0].description = original;
+  const blob = await encryptBackup({ data, images: {} }, password);
+  const envelope = JSON.parse(await blob.text());
+  const material = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveKey'],
+  );
+  const key = await crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      hash: 'SHA-256',
+      salt: Buffer.from(envelope.salt, 'base64'),
+      iterations: envelope.iterations,
+    },
+    material,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt'],
+  );
+  const raw = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: Buffer.from(envelope.iv, 'base64') },
+    key,
+    Buffer.from(envelope.ciphertext, 'base64'),
+  );
+  assert.equal(
+    JSON.parse(new TextDecoder().decode(raw)).data.recipes[0].description,
+    original,
+  );
+  assert.equal(data.recipes[0].description, original);
+  const restored = await decryptBackup(
+    new File([blob], 'backup.mampffred'),
+    password,
+  );
+  assert.equal(
+    restored.payload.data.recipes[0].description,
+    'Eigener Text mit Richtung',
+  );
 });

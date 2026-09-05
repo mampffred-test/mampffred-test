@@ -7,6 +7,7 @@ import type {
   NutritionGoal,
   Recipe,
 } from '../lib/model.ts';
+import { APP_SCHEMA_VERSION } from '../lib/model.ts';
 import {
   aggregateNutritionDay,
   aggregateNutritionWeek,
@@ -66,7 +67,7 @@ function data(
   goals: NutritionGoal[] = [],
 ): AppData {
   return {
-    schemaVersion: 5,
+    schemaVersion: APP_SCHEMA_VERSION,
     recipes,
     plan: [{ date: '2026-09-07', meals }],
     shopping: [],
@@ -80,6 +81,8 @@ function data(
       goals,
     },
     foodOverrides: {},
+    customFoods: [],
+    recipeDrafts: [],
   };
 }
 

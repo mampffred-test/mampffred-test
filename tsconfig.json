@@ -27,6 +27,7 @@
     "lib/storage.ts",
     "lib/backup.ts",
     "lib/local-date.ts",
+    "tests/**/*.ts",
     "vite.config.ts"
   ],
   "exclude": ["node_modules"]

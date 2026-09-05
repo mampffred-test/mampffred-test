@@ -127,9 +127,11 @@ import {
   visibleRecipeTags,
 } from '@/lib/recipe-filter';
 import {
-  formatSharedRecipeText,
+  createSharedRecipeFile,
+  createSharedRecipeUrl,
   MAX_SHARED_RECIPE_BYTES,
   parseSharedRecipe,
+  readSharedRecipeHash,
   serializeSharedRecipe,
 } from '@/lib/recipe-sharing';
 import {
@@ -185,6 +187,14 @@ const weekday = new Intl.DateTimeFormat('de-DE', { weekday: 'short' });
 const monthShort = new Intl.DateTimeFormat('de-DE', { month: 'short' });
 const fromIso = parseLocalDate;
 const assetUrl = (path: string) => `${import.meta.env.BASE_URL}${path}`;
+const recipeShareBaseUrl = () =>
+  new URL(import.meta.env.BASE_URL, window.location.origin).href;
+const sharePreparationMessage = (error: unknown) =>
+  error instanceof Error &&
+  (error.message === 'SHARED_RECIPE_LINK_TOO_LARGE' ||
+    error.message === 'SHARED_RECIPE_TOO_LARGE')
+    ? 'Dieses Rezept ist zu umfangreich für einen Rezeptlink. Sichere es stattdessen als Rezeptdatei.'
+    : 'Das Rezept konnte gerade nicht geteilt werden.';
 const mealSlots: MealSlot[] = ['Frühstück', 'Mittagessen', 'Abendessen'];
 const ingredientUnits = [
   'g',
@@ -766,15 +776,7 @@ function TodayView({
           </span>
         </div>
         <span className="backup-card-leaves" aria-hidden="true">
-          <span className="backup-card-leaf backup-card-leaf-top">
-            <img src={assetUrl('assets/basil-card-leaves.png')} alt="" />
-          </span>
-          <span className="backup-card-leaf backup-card-leaf-right">
-            <img src={assetUrl('assets/basil-card-leaves.png')} alt="" />
-          </span>
-          <span className="backup-card-leaf backup-card-leaf-left">
-            <img src={assetUrl('assets/basil-card-leaves.png')} alt="" />
-          </span>
+          <img src={assetUrl('assets/basil-card-leaves.png')} alt="" />
         </span>
         <button onClick={onBackup}>
           <strong>{backupReminder.buttonLabel}</strong>
@@ -2093,6 +2095,8 @@ function RecipeDetail({
   onFavorite,
   onAddToShopping,
   onShare,
+  shareReady,
+  onExport,
   planLabel = 'Planen',
   inactive = false,
 }: {
@@ -2105,6 +2109,8 @@ function RecipeDetail({
   onFavorite: () => void;
   onAddToShopping: (servings: number) => void;
   onShare: () => void;
+  shareReady: boolean;
+  onExport: () => void;
   planLabel?: string;
   inactive?: boolean;
 }) {
@@ -2147,7 +2153,11 @@ function RecipeDetail({
             <ArrowLeft size={22} />
           </IconButton>
           <div>
-            <IconButton label="Rezept teilen" onClick={onShare}>
+            <IconButton
+              label="Rezept teilen"
+              onClick={onShare}
+              disabled={!shareReady}
+            >
               <Share2 size={20} />
             </IconButton>
             <IconButton
@@ -2281,6 +2291,9 @@ function RecipeDetail({
           <div className="detail-actions">
             <button onClick={onEdit}>
               <Utensils size={18} /> Bearbeiten
+            </button>
+            <button onClick={onExport}>
+              <Download size={18} /> Als Rezeptdatei sichern
             </button>
           </div>
         </div>
@@ -5046,6 +5059,164 @@ function DeleteRecipeDialog({
   );
 }
 
+function RecipeLinkDialog({
+  text,
+  onClose,
+}: {
+  text: string;
+  onClose: () => void;
+}) {
+  const dialogRef = useModalFocus<HTMLElement>(onClose);
+  const [copyFailed, setCopyFailed] = useState(false);
+  return (
+    <div className="modal-backdrop">
+      <section
+        ref={dialogRef}
+        className="confirm-dialog shared-recipe-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="recipe-link-title"
+      >
+        <h2 id="recipe-link-title">Rezeptlink kopieren</h2>
+        <p>Du kannst den Link kopieren und in einer Nachricht teilen.</p>
+        <textarea
+          aria-label="Rezeptlink"
+          readOnly
+          value={text}
+          rows={4}
+          onFocus={(event) => event.currentTarget.select()}
+        />
+        {copyFailed && (
+          <p role="status">
+            Bitte markiere den Link im Textfeld und kopiere ihn über das
+            Auswahlmenü.
+          </p>
+        )}
+        <div className="dialog-actions">
+          <button type="button" onClick={onClose}>
+            Schließen
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => {
+              // Ein neuer Klick gibt auch nach einem abgelehnten Share-Aufruf
+              // eine frische Benutzeraktivierung für die Zwischenablage.
+              try {
+                void navigator.clipboard
+                  .writeText(text)
+                  .then(onClose)
+                  .catch(() => setCopyFailed(true));
+              } catch {
+                setCopyFailed(true);
+              }
+            }}
+          >
+            Link kopieren
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SharedRecipeDialog({
+  recipe,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  recipe: Recipe;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const dialogRef = useModalFocus<HTMLElement>(() => {
+    if (!busy) onCancel();
+  });
+  return (
+    <div className="modal-backdrop">
+      <section
+        ref={dialogRef}
+        className="confirm-dialog shared-recipe-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="shared-recipe-title"
+        aria-describedby="shared-recipe-description"
+      >
+        <div className="lock-badge">
+          <Share2 size={20} />
+        </div>
+        <small>Mit dir über Mampffred geteilt</small>
+        <h2 id="shared-recipe-title">{recipe.name}</h2>
+        <p id="shared-recipe-description">
+          {recipe.description ||
+            'Dieses Rezept kann deiner Sammlung hinzugefügt werden.'}
+        </p>
+        <div className="shared-recipe-meta">
+          <span>
+            <Clock3 size={15} /> {recipe.minutes} Min.
+          </span>
+          <span>
+            <Users size={15} /> {recipe.servings}{' '}
+            {recipe.servings === 1 ? 'Portion' : 'Portionen'}
+          </span>
+          <span>
+            <Carrot size={15} /> {recipe.ingredients.length} Zutaten
+          </span>
+        </div>
+        <div className="shared-recipe-preview">
+          <strong>Zutaten</strong>
+          <ul>
+            {recipe.ingredients.slice(0, 5).map((ingredient) => (
+              <li key={ingredient.id}>
+                {[ingredient.amount, ingredient.unit, ingredient.name]
+                  .filter(Boolean)
+                  .join(' ')}
+              </li>
+            ))}
+          </ul>
+          {recipe.ingredients.length > 5 && (
+            <small>
+              und {recipe.ingredients.length - 5} weitere{' '}
+              {recipe.ingredients.length - 5 === 1 ? 'Zutat' : 'Zutaten'}
+            </small>
+          )}
+          <strong>Zubereitung</strong>
+          <ol>
+            {recipe.steps.slice(0, 2).map((step, index) => (
+              <li key={index}>{step}</li>
+            ))}
+          </ol>
+          {recipe.steps.length > 2 && (
+            <small>
+              und {recipe.steps.length - 2} weitere{' '}
+              {recipe.steps.length - 2 === 1 ? 'Schritt' : 'Schritte'}
+            </small>
+          )}
+        </div>
+        <p className="shared-recipe-origin">
+          Die Angaben stammen aus einem geteilten Rezept. Mampffred hat die
+          Inhalte nicht geprüft.
+        </p>
+        <div className="dialog-actions">
+          <button type="button" onClick={onCancel} disabled={busy}>
+            Abbrechen
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={onConfirm}
+            disabled={busy}
+          >
+            {busy ? 'Wird hinzugefügt …' : 'Rezept hinzufügen'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function WeekShoppingDialog({
   result,
   onCancel,
@@ -5509,6 +5680,9 @@ export default function MampffredApp() {
   const [planner, setPlanner] = useState<PlannerState>();
   const [plannerResume, setPlannerResume] = useState<PlannerResume>();
   const [toast, setToast] = useState<ToastState>();
+  const [sharedRecipePreview, setSharedRecipePreview] = useState<Recipe>();
+  const [sharedRecipeImportBusy, setSharedRecipeImportBusy] = useState(false);
+  const [shareCopyText, setShareCopyText] = useState<string>();
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   const appFrameRef = useRef<HTMLDivElement>(null);
   const tabScrollPositions = useRef<Partial<Record<Tab, number>>>({});
@@ -5567,6 +5741,33 @@ export default function MampffredApp() {
     () => data.recipes.find((recipe) => recipe.id === selectedRecipeId),
     [data.recipes, selectedRecipeId],
   );
+  const [preparedShareLink, setPreparedShareLink] = useState<{
+    recipe: Recipe;
+    url?: string;
+    error?: string;
+  }>();
+  useEffect(() => {
+    setPreparedShareLink(undefined);
+    if (!selectedRecipe) return;
+    let cancelled = false;
+    createSharedRecipeUrl(
+      serializeSharedRecipe(selectedRecipe),
+      recipeShareBaseUrl(),
+    )
+      .then((url) => {
+        if (!cancelled) setPreparedShareLink({ recipe: selectedRecipe, url });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled)
+          setPreparedShareLink({
+            recipe: selectedRecipe,
+            error: sharePreparationMessage(error),
+          });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRecipe]);
   const editorSavedDraft = editorRecipeId?.startsWith('draft:')
     ? data.recipeDrafts.find(
         (draft) => draft.id === editorRecipeId.slice('draft:'.length),
@@ -5654,6 +5855,47 @@ export default function MampffredApp() {
       cancelled = true;
     };
   }, [loadAttempt]);
+  useEffect(() => {
+    if (loadState !== 'ready') return;
+    let cancelled = false;
+    const inspectSharedRecipe = () => {
+      const hash = window.location.hash;
+      if (!hash.startsWith('#recipe=')) return;
+      void readSharedRecipeHash(hash)
+        .then((contents) =>
+          contents ? parseSharedRecipe(contents) : undefined,
+        )
+        .then((recipe) => {
+          if (!cancelled && recipe) setSharedRecipePreview(recipe);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setToast({
+            message: 'Dieser Rezeptlink ist ungültig oder unvollständig.',
+            tone: 'error',
+          });
+          if (toastTimer.current) window.clearTimeout(toastTimer.current);
+          toastTimer.current = window.setTimeout(
+            () => setToast(undefined),
+            4200,
+          );
+        })
+        .finally(() => {
+          if (cancelled || window.location.hash !== hash) return;
+          window.history.replaceState(
+            window.history.state,
+            '',
+            `${window.location.pathname}${window.location.search}`,
+          );
+        });
+    };
+    inspectSharedRecipe();
+    window.addEventListener('hashchange', inspectSharedRecipe);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('hashchange', inspectSharedRecipe);
+    };
+  }, [loadState]);
   useEffect(() => {
     if (import.meta.env.PROD && 'serviceWorker' in navigator)
       navigator.serviceWorker
@@ -6144,64 +6386,93 @@ export default function MampffredApp() {
     showToast('Einkaufsartikel wiederhergestellt.');
   }
   async function shareRecipe(recipe: Recipe) {
-    const contents = serializeSharedRecipe(recipe);
-    if (
-      new TextEncoder().encode(contents).byteLength > MAX_SHARED_RECIPE_BYTES
-    ) {
+    const text = `„${recipe.name}“ als Mampffred-Rezept öffnen und direkt zur eigenen Sammlung hinzufügen.`;
+    // Der Link wird beim Öffnen des Rezepts vorbereitet: WebKit verliert die
+    // transiente Aktivierung durch jedes await, deshalb muss share() ohne
+    // vorgelagerte Kompression direkt aus dem Klick heraus laufen.
+    if (preparedShareLink?.recipe !== recipe) return;
+    const { url, error } = preparedShareLink;
+    if (!url) {
       showToast(
-        'Dieses Rezept ist für eine einzelne Rezeptdatei zu groß.',
+        error || 'Der Rezeptlink wird noch vorbereitet.',
         4200,
+        'error',
       );
       return;
     }
-    const safeName =
-      recipe.name
-        .normalize('NFKD')
-        .replace(/[^a-z0-9_-]+/gi, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 80) || 'mampffred-rezept';
-    const file = new File([contents], `${safeName}.mampffred-rezept.json`, {
-      type: 'application/json',
-    });
-    const isAndroid = /Android/i.test(navigator.userAgent);
-    try {
-      if (!isAndroid && navigator.canShare?.({ files: [file] })) {
-        try {
-          await navigator.share({
-            title: recipe.name,
-            text: 'Ein Mampffred-Rezept. Persönliche Bilder und lokale Nährwertkorrekturen sind nicht enthalten.',
-            files: [file],
-          });
-          return;
-        } catch (error) {
-          if (error instanceof DOMException && error.name === 'AbortError')
-            return;
-        }
-      }
-      if (navigator.share) {
-        await navigator.share({
-          title: recipe.name,
-          text: formatSharedRecipeText(recipe),
-        });
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: recipe.name, text, url });
         return;
+      } catch (error) {
+        // Abbruch durch die Person ist kein Fehler; alles andere fällt auf die
+        // Zwischenablage zurück, statt nur eine Fehlermeldung zu zeigen.
+        if (error instanceof DOMException && error.name === 'AbortError')
+          return;
       }
-      const url = URL.createObjectURL(file);
+    }
+    try {
+      await navigator.clipboard.writeText(`${text}\n${url}`);
+      showToast('Rezeptlink wurde kopiert.');
+    } catch {
+      setShareCopyText(`${text}\n${url}`);
+    }
+  }
+  function exportRecipeFile(recipe: Recipe) {
+    try {
+      const file = createSharedRecipeFile(recipe);
       const link = document.createElement('a');
-      link.href = url;
+      link.href = URL.createObjectURL(file);
       link.download = file.name;
       document.body.append(link);
       link.click();
       link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-      showToast('Rezeptdatei wurde gespeichert und kann geteilt werden.');
+      window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      showToast('Der Download der Rezeptdatei wurde gestartet.');
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return;
       showToast(
-        'Das Rezept konnte gerade nicht geteilt werden.',
+        error instanceof Error && error.message === 'SHARED_RECIPE_TOO_LARGE'
+          ? 'Dieses Rezept ist für eine Rezeptdatei zu groß. Erstelle unter „Mehr“ eine vollständige Sicherung.'
+          : 'Die Rezeptdatei konnte nicht erstellt werden.',
         4200,
         'error',
       );
     }
+  }
+  async function saveImportedRecipe(imported: Recipe) {
+    const existing = dataRef.current.recipes.find(
+      (recipe) => recipe.shareId === imported.shareId,
+    );
+    if (existing) {
+      changeTab('recipes');
+      setRecipePlanWeekStart(undefined);
+      setSelectedRecipeId(existing.id);
+      showToast('Dieses Rezept ist bereits in deiner Sammlung.');
+      return true;
+    }
+    const id = crypto.randomUUID();
+    const recipe: Recipe = {
+      ...imported,
+      id,
+      imageCell: Math.floor(Math.random() * 6),
+      ingredients: imported.ingredients.map((ingredient) => ({
+        ...ingredient,
+        id: crypto.randomUUID(),
+      })),
+    };
+    if (
+      !setData((current) => ({
+        ...current,
+        recipes: [recipe, ...current.recipes],
+      }))
+    )
+      return false;
+    await lastSave.current;
+    changeTab('recipes');
+    setRecipePlanWeekStart(undefined);
+    setSelectedRecipeId(id);
+    showToast(`„${recipe.name}“ wurde sicher importiert.`);
+    return true;
   }
   async function importRecipeFile(file: File) {
     if (file.size > MAX_SHARED_RECIPE_BYTES) {
@@ -6210,38 +6481,29 @@ export default function MampffredApp() {
     }
     try {
       const imported = await parseSharedRecipe(await file.text());
-      if (
-        dataRef.current.recipes.some(
-          (recipe) => recipe.shareId === imported.shareId,
-        )
-      ) {
-        showToast('Dieses Rezept ist bereits in deiner Sammlung.');
-        return;
-      }
-      const id = crypto.randomUUID();
-      const recipe: Recipe = {
-        ...imported,
-        id,
-        imageCell: Math.floor(Math.random() * 6),
-        ingredients: imported.ingredients.map((ingredient) => ({
-          ...ingredient,
-          id: crypto.randomUUID(),
-        })),
-      };
-      if (
-        !setData((current) => ({
-          ...current,
-          recipes: [recipe, ...current.recipes],
-        }))
-      )
-        return;
-      await lastSave.current;
-      showToast(`„${recipe.name}“ wurde sicher importiert.`);
+      setSharedRecipePreview(imported);
     } catch {
       showToast(
         'Das Rezept konnte nicht importiert oder gespeichert werden. Bitte prüfe Datei und Speicherhinweis.',
         4200,
+        'error',
       );
+    }
+  }
+  async function confirmSharedRecipeImport() {
+    if (!sharedRecipePreview || sharedRecipeImportBusy) return;
+    setSharedRecipeImportBusy(true);
+    try {
+      if (await saveImportedRecipe(sharedRecipePreview))
+        setSharedRecipePreview(undefined);
+    } catch {
+      showToast(
+        'Das geteilte Rezept konnte nicht gespeichert werden.',
+        4200,
+        'error',
+      );
+    } finally {
+      setSharedRecipeImportBusy(false);
     }
   }
   function openPlanner(
@@ -6829,7 +7091,9 @@ export default function MampffredApp() {
                 planner ||
                 settings ||
                 backupRequest ||
-                weekShoppingRequest,
+                weekShoppingRequest ||
+                sharedRecipePreview ||
+                shareCopyText,
               ) || undefined
             }
             inert={
@@ -6840,7 +7104,9 @@ export default function MampffredApp() {
                 planner ||
                 settings ||
                 backupRequest ||
-                weekShoppingRequest,
+                weekShoppingRequest ||
+                sharedRecipePreview ||
+                shareCopyText,
               ) || undefined
             }
           >
@@ -7006,7 +7272,14 @@ export default function MampffredApp() {
                 addRecipeToShopping(selectedRecipe, servings)
               }
               onShare={() => void shareRecipe(selectedRecipe)}
-              inactive={Boolean(editorRecipeId || planner)}
+              shareReady={preparedShareLink?.recipe === selectedRecipe}
+              onExport={() => exportRecipeFile(selectedRecipe)}
+              inactive={Boolean(
+                editorRecipeId ||
+                planner ||
+                sharedRecipePreview ||
+                shareCopyText,
+              )}
             />
           )}
           {editorRecipeId && (
@@ -7116,6 +7389,20 @@ export default function MampffredApp() {
               result={weekShoppingRequest}
               onCancel={() => setWeekShoppingRequest(undefined)}
               onConfirm={applyWeekShopping}
+            />
+          )}
+          {sharedRecipePreview && (
+            <SharedRecipeDialog
+              recipe={sharedRecipePreview}
+              busy={sharedRecipeImportBusy}
+              onCancel={() => setSharedRecipePreview(undefined)}
+              onConfirm={() => void confirmSharedRecipeImport()}
+            />
+          )}
+          {shareCopyText && (
+            <RecipeLinkDialog
+              text={shareCopyText}
+              onClose={() => setShareCopyText(undefined)}
             />
           )}
           {pendingDeletion && (

@@ -241,12 +241,14 @@ test('weist doppelte Einkaufslisten-IDs zurück', () => {
       name: 'Paprika',
       category: 'Gemüse & Obst',
       checked: false,
+      origin: { kind: 'manual' },
     },
     {
       id: 'doppelt',
       name: 'Reis',
       category: 'Vorrat',
       checked: false,
+      origin: { kind: 'manual' },
     },
   ];
   assert.throws(() => migrateAppData(data), /INVALID_APP_DATA/);
