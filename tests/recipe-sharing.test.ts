@@ -3,10 +3,20 @@ import test from 'node:test';
 
 import { createSampleRecipes } from '../lib/model.ts';
 import {
+  formatSharedRecipeText,
   MAX_SHARED_RECIPE_BYTES,
   parseSharedRecipe,
   serializeSharedRecipe,
 } from '../lib/recipe-sharing.ts';
+
+test('erstellt einen lesbaren Text als Android-Fallback', () => {
+  const recipe = createSampleRecipes()[0];
+  const sharedText = formatSharedRecipeText(recipe);
+
+  assert.match(sharedText, new RegExp(`^${recipe.name}`));
+  assert.match(sharedText, /Zutaten\n- 100 g Haferflocken/);
+  assert.match(sharedText, /Zubereitung\n1\./);
+});
 
 test('teilt nur portable Rezeptdaten ohne lokale oder ungeprüfte Metadaten', async () => {
   const source = createSampleRecipes()[0];

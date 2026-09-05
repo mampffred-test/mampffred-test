@@ -20,6 +20,7 @@ import {
   Croissant,
   Download,
   EllipsisVertical,
+  GripVertical,
   Heart,
   Home,
   ImagePlus,
@@ -126,6 +127,7 @@ import {
   visibleRecipeTags,
 } from '@/lib/recipe-filter';
 import {
+  formatSharedRecipeText,
   MAX_SHARED_RECIPE_BYTES,
   parseSharedRecipe,
   serializeSharedRecipe,
@@ -184,6 +186,27 @@ const monthShort = new Intl.DateTimeFormat('de-DE', { month: 'short' });
 const fromIso = parseLocalDate;
 const assetUrl = (path: string) => `${import.meta.env.BASE_URL}${path}`;
 const mealSlots: MealSlot[] = ['Frühstück', 'Mittagessen', 'Abendessen'];
+const ingredientUnits = [
+  'g',
+  'kg',
+  'ml',
+  'l',
+  'TL',
+  'EL',
+  'Prise',
+  'Stück',
+  'Scheibe',
+  'Scheiben',
+  'Bund',
+  'Dose',
+  'Packung',
+  'Becher',
+  'Glas',
+  'Tasse',
+  'Zehe',
+  'Handvoll',
+  'Spritzer',
+] as const;
 const RecipeImageRequestContext = createContext<(key: string) => void>(
   () => undefined,
 );
@@ -744,13 +767,13 @@ function TodayView({
         </div>
         <span className="backup-card-leaves" aria-hidden="true">
           <span className="backup-card-leaf backup-card-leaf-top">
-            <img src={assetUrl('assets/backup-leaves.png')} alt="" />
+            <img src={assetUrl('assets/basil-card-leaves.png')} alt="" />
           </span>
           <span className="backup-card-leaf backup-card-leaf-right">
-            <img src={assetUrl('assets/backup-leaves.png')} alt="" />
+            <img src={assetUrl('assets/basil-card-leaves.png')} alt="" />
           </span>
           <span className="backup-card-leaf backup-card-leaf-left">
-            <img src={assetUrl('assets/backup-leaves.png')} alt="" />
+            <img src={assetUrl('assets/basil-card-leaves.png')} alt="" />
           </span>
         </span>
         <button onClick={onBackup}>
@@ -811,10 +834,30 @@ function WeekView({
   const first = fromIso(days[0].date);
   const last = fromIso(days[6].date);
   const isCurrentWeek = weekStart === startOfLocalWeek();
-  const defaultSelectedDate = days.some((day) => day.date === today)
-    ? today
-    : days[0].date;
-  const selectedDate = defaultSelectedDate;
+  const [selectedDate, setSelectedDate] = useState(() =>
+    days.some((day) => day.date === today) ? today : days[0].date,
+  );
+  const dayStripRef = useRef<HTMLElement>(null);
+  const selectableDays = Array.from({ length: 21 }, (_, index) => {
+    const date = addLocalDays(weekStart, index - 7);
+    return data.plan.find((day) => day.date === date) ?? { date, meals: [] };
+  });
+  useEffect(() => {
+    const weekEnd = addLocalDays(weekStart, 6);
+    setSelectedDate((current) => {
+      if (current >= weekStart && current <= weekEnd) return current;
+      return today >= weekStart && today <= weekEnd ? today : weekStart;
+    });
+  }, [weekStart, today]);
+  useEffect(() => {
+    dayStripRef.current
+      ?.querySelector<HTMLElement>('[aria-pressed="true"]')
+      ?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'center',
+      });
+  }, [selectedDate, weekStart]);
   const plannedMealCount = days.reduce(
     (total, day) => total + day.meals.length,
     0,
@@ -899,19 +942,29 @@ function WeekView({
         </div>
       </header>
 
-      <nav className="week-day-strip" aria-label="Tage dieser Woche">
-        {days.map((day) => {
+      <nav
+        ref={dayStripRef}
+        className="week-day-strip"
+        aria-label="Tage auswählen; horizontal wischen für weitere Tage"
+      >
+        {selectableDays.map((day) => {
           const date = fromIso(day.date);
           const isToday = day.date === today;
           const selected = day.date === selectedDate;
+          const isVisibleWeek = days.some((item) => item.date === day.date);
           return (
             <button
               type="button"
-              className={selected ? 'is-selected' : ''}
+              className={`${selected ? 'is-selected' : ''} ${isVisibleWeek ? '' : 'is-adjacent-week'}`}
               aria-current={isToday ? 'date' : undefined}
+              aria-pressed={selected}
               aria-label={`${isToday ? 'Heute, ' : ''}${localeDate.format(date)} anzeigen`}
               key={day.date}
-              onClick={() => onOpenDay(day.date)}
+              onClick={() => {
+                setSelectedDate(day.date);
+                const nextWeekStart = startOfLocalWeek(date);
+                if (nextWeekStart !== weekStart) onWeekStart(nextWeekStart);
+              }}
             >
               <span>{weekday.format(date).replace('.', '')}</span>
               <strong>{date.getDate()}</strong>
@@ -1424,7 +1477,7 @@ function RecipesView({
           <p>Entdecke deine Lieblingsgerichte</p>
         </div>
         <span className="library-hero-leaves" aria-hidden="true">
-          <img src={assetUrl('assets/recipes-header-leaves-v3.png')} alt="" />
+          <img src={assetUrl('assets/basil-header-leaves.png')} alt="" />
         </span>
       </header>
       <IconButton
@@ -1485,7 +1538,7 @@ function RecipesView({
           ref={importFileRef}
           hidden
           type="file"
-          accept=".mampffred-rezept,application/json"
+          accept=".mampffred-rezept,.mampffred-rezept.json,application/json"
           onChange={(event) => {
             const file = event.target.files?.[0];
             if (file) onImport(file);
@@ -1692,7 +1745,7 @@ function ShoppingView({
           <p>Deine Einkaufsliste für diese Woche</p>
         </div>
         <span className="shopping-hero-leaves" aria-hidden="true">
-          <img src={assetUrl('assets/recipes-header-leaves-v3.png')} alt="" />
+          <img src={assetUrl('assets/basil-header-leaves.png')} alt="" />
         </span>
         <details className="shopping-period-menu">
           <summary aria-label="Einkaufswoche wählen">
@@ -1963,7 +2016,7 @@ function MoreView({
   ];
   return (
     <div className="screen-content more-view">
-      <Header title="Mehr" subtitle="Alles an seinem Platz" />
+      <Header title="Mehr" subtitle="Alles an seinem Platz." />
       <section className="more-intro-card">
         <span>
           <Leaf size={27} />
@@ -3062,9 +3115,11 @@ function RecipeEditor({
   const [removeImage, setRemoveImage] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const amountRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const unitRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const unitRefs = useRef<Record<string, HTMLSelectElement | null>>({});
   const foodInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [ingredientAnnouncement, setIngredientAnnouncement] = useState('');
+  const draggedStepRef = useRef<number | undefined>(undefined);
+  const [draggedStep, setDraggedStep] = useState<number>();
   const createdAt = useRef(savedDraft?.createdAt ?? new Date().toISOString());
   const autosaveCallbacks = useRef({ onAutosave, onDiscardDraft });
   autosaveCallbacks.current = { onAutosave, onDiscardDraft };
@@ -3082,6 +3137,23 @@ function RecipeEditor({
       foodInputRefs.current[id]?.focus();
       foodInputRefs.current[id]?.scrollIntoView({ block: 'center' });
     });
+  };
+  const moveStep = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0) return;
+    setDraft((current) => {
+      if (from >= current.steps.length || to >= current.steps.length)
+        return current;
+      const steps = [...current.steps];
+      const [moved] = steps.splice(from, 1);
+      steps.splice(to, 0, moved);
+      return { ...current, steps };
+    });
+    draggedStepRef.current = to;
+    setDraggedStep(to);
+  };
+  const finishStepDrag = () => {
+    draggedStepRef.current = undefined;
+    setDraggedStep(undefined);
   };
   const initialAutosaveSignature = useRef(
     JSON.stringify({ draft, draftFoodOverrides, proteinPerServing }),
@@ -3726,7 +3798,7 @@ function RecipeEditor({
               </small>
             )}
           </details>
-          <fieldset>
+          <fieldset className="ingredient-fieldset">
             <legend>Zutaten</legend>
             {draft.ingredients.map((item, index) => (
               <div className="ingredient-editor" key={item.id ?? index}>
@@ -3843,13 +3915,12 @@ function RecipeEditor({
                   </label>
                   <label>
                     Einheit
-                    <input
+                    <select
                       ref={(node) => {
                         unitRefs.current[item.id ?? String(index)] = node;
                       }}
                       aria-label={`Einheit für Zutat ${index + 1}`}
                       value={item.unit}
-                      maxLength={100}
                       onChange={(event) =>
                         setDraft({
                           ...draft,
@@ -3861,13 +3932,18 @@ function RecipeEditor({
                           ),
                         })
                       }
-                      onKeyDown={(event) => {
-                        if (event.key !== 'Enter') return;
-                        event.preventDefault();
-                        addIngredientAndFocus();
-                      }}
-                      placeholder="g, ml, Stück …"
-                    />
+                    >
+                      <option value="">Einheit wählen …</option>
+                      {item.unit &&
+                        !ingredientUnits.includes(
+                          item.unit as (typeof ingredientUnits)[number],
+                        ) && <option value={item.unit}>{item.unit}</option>}
+                      {ingredientUnits.map((unit) => (
+                        <option value={unit} key={unit}>
+                          {unit}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 </div>
               </div>
@@ -3885,8 +3961,99 @@ function RecipeEditor({
           </fieldset>
           <fieldset>
             <legend>Schritte</legend>
+            {draft.steps.length > 1 && (
+              <p className="step-reorder-hint">
+                Am Griff ziehen, um die Reihenfolge zu ändern.
+              </p>
+            )}
             {draft.steps.map((step, index) => (
-              <div className="step-editor" key={index}>
+              <div
+                className={`step-editor ${draggedStep === index ? 'is-dragging' : ''}`}
+                data-step-index={index}
+                key={index}
+                onDragOver={(event) => {
+                  if (draggedStepRef.current === undefined) return;
+                  event.preventDefault();
+                  moveStep(draggedStepRef.current, index);
+                }}
+              >
+                <button
+                  type="button"
+                  className="step-drag-handle"
+                  draggable
+                  aria-label={`Schritt ${index + 1} verschieben. Mit Pfeil hoch oder runter neu anordnen.`}
+                  onDragStart={(event) => {
+                    draggedStepRef.current = index;
+                    setDraggedStep(index);
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData('text/plain', String(index));
+                  }}
+                  onDragEnd={finishStepDrag}
+                  onPointerDown={(event) => {
+                    if (event.pointerType === 'mouse') return;
+                    draggedStepRef.current = index;
+                    setDraggedStep(index);
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                  }}
+                  onPointerMove={(event) => {
+                    if (
+                      event.pointerType === 'mouse' ||
+                      draggedStepRef.current === undefined
+                    )
+                      return;
+                    const rows = Array.from(
+                      event.currentTarget
+                        .closest('fieldset')
+                        ?.querySelectorAll<HTMLElement>('[data-step-index]') ??
+                        [],
+                    );
+                    const target = rows.find((row) => {
+                      const bounds = row.getBoundingClientRect();
+                      return (
+                        event.clientY >= bounds.top &&
+                        event.clientY <= bounds.bottom
+                      );
+                    });
+                    const targetIndex = Number(target?.dataset.stepIndex);
+                    if (Number.isInteger(targetIndex))
+                      moveStep(draggedStepRef.current, targetIndex);
+                  }}
+                  onPointerUp={finishStepDrag}
+                  onPointerCancel={finishStepDrag}
+                  onKeyDown={(event) => {
+                    if (event.key === 'ArrowUp' && index > 0) {
+                      event.preventDefault();
+                      const fieldset = event.currentTarget.closest('fieldset');
+                      moveStep(index, index - 1);
+                      finishStepDrag();
+                      window.requestAnimationFrame(() =>
+                        fieldset
+                          ?.querySelector<HTMLButtonElement>(
+                            `[data-step-index="${index - 1}"] .step-drag-handle`,
+                          )
+                          ?.focus(),
+                      );
+                    }
+                    if (
+                      event.key === 'ArrowDown' &&
+                      index < draft.steps.length - 1
+                    ) {
+                      event.preventDefault();
+                      const fieldset = event.currentTarget.closest('fieldset');
+                      moveStep(index, index + 1);
+                      finishStepDrag();
+                      window.requestAnimationFrame(() =>
+                        fieldset
+                          ?.querySelector<HTMLButtonElement>(
+                            `[data-step-index="${index + 1}"] .step-drag-handle`,
+                          )
+                          ?.focus(),
+                      );
+                    }
+                  }}
+                >
+                  <GripVertical size={19} />
+                </button>
                 <span>{index + 1}</span>
                 <textarea
                   value={step}
@@ -5290,6 +5457,10 @@ type PendingShoppingDeletion = {
   removed: RemovedShoppingItem[];
   cleanupTimer: number;
 };
+type ToastState = {
+  message: string;
+  tone: 'success' | 'error';
+};
 
 export default function MampffredApp() {
   const [data, publishData] = useState<AppData>(() => createEmptyData());
@@ -5337,7 +5508,7 @@ export default function MampffredApp() {
     useState<PendingShoppingDeletion>();
   const [planner, setPlanner] = useState<PlannerState>();
   const [plannerResume, setPlannerResume] = useState<PlannerResume>();
-  const [toast, setToast] = useState<string>();
+  const [toast, setToast] = useState<ToastState>();
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   const appFrameRef = useRef<HTMLDivElement>(null);
   const tabScrollPositions = useRef<Partial<Record<Tab, number>>>({});
@@ -5673,8 +5844,12 @@ export default function MampffredApp() {
     },
     [],
   );
-  function showToast(message: string, duration = 2800) {
-    setToast(message);
+  function showToast(
+    message: string,
+    duration = 2800,
+    tone: ToastState['tone'] = 'success',
+  ) {
+    setToast({ message, tone });
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(undefined), duration);
   }
@@ -5985,15 +6160,28 @@ export default function MampffredApp() {
         .replace(/[^a-z0-9_-]+/gi, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 80) || 'mampffred-rezept';
-    const file = new File([contents], `${safeName}.mampffred-rezept`, {
+    const file = new File([contents], `${safeName}.mampffred-rezept.json`, {
       type: 'application/json',
     });
+    const isAndroid = /Android/i.test(navigator.userAgent);
     try {
-      if (navigator.canShare?.({ files: [file] })) {
+      if (!isAndroid && navigator.canShare?.({ files: [file] })) {
+        try {
+          await navigator.share({
+            title: recipe.name,
+            text: 'Ein Mampffred-Rezept. Persönliche Bilder und lokale Nährwertkorrekturen sind nicht enthalten.',
+            files: [file],
+          });
+          return;
+        } catch (error) {
+          if (error instanceof DOMException && error.name === 'AbortError')
+            return;
+        }
+      }
+      if (navigator.share) {
         await navigator.share({
           title: recipe.name,
-          text: 'Ein Mampffred-Rezept. Persönliche Bilder und lokale Nährwertkorrekturen sind nicht enthalten.',
-          files: [file],
+          text: formatSharedRecipeText(recipe),
         });
         return;
       }
@@ -6008,7 +6196,11 @@ export default function MampffredApp() {
       showToast('Rezeptdatei wurde gespeichert und kann geteilt werden.');
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
-      showToast('Das Rezept konnte gerade nicht geteilt werden.');
+      showToast(
+        'Das Rezept konnte gerade nicht geteilt werden.',
+        4200,
+        'error',
+      );
     }
   }
   async function importRecipeFile(file: File) {
@@ -6946,8 +7138,17 @@ export default function MampffredApp() {
             </div>
           )}
           {toast && !pendingDeletion && !pendingShoppingDeletion && (
-            <div className="toast" role="status" aria-live="polite">
-              <Check size={17} /> {toast}
+            <div
+              className={`toast ${toast.tone}`}
+              role="status"
+              aria-live="polite"
+            >
+              {toast.tone === 'error' ? (
+                <CircleAlert size={17} />
+              ) : (
+                <Check size={17} />
+              )}{' '}
+              {toast.message}
             </div>
           )}
         </main>

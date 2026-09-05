@@ -34,6 +34,8 @@ function serviceWorkerPrecache() {
         'assets/app-icon-512.png',
         'assets/apple-touch-icon.png',
         'assets/mampffred-mascot-small.png',
+        'assets/basil-header-leaves.png',
+        'assets/basil-card-leaves.png',
         'assets/recipe-sprite-optimized.jpg',
         ...builtAssets,
       ];

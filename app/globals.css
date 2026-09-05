@@ -381,9 +381,9 @@ select:focus-visible {
 }
 .week-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 11px;
   margin: 2px 0 20px;
 }
 .week-hero-copy {
@@ -407,7 +407,9 @@ select:focus-visible {
 .week-picker {
   display: flex;
   align-items: center;
-  gap: 2px;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
 }
 .week-picker .icon-button {
   width: 28px;
@@ -416,6 +418,8 @@ select:focus-visible {
   color: var(--green-dark);
 }
 .week-date-pill {
+  flex: 1 1 auto;
+  min-width: 0;
   min-height: 44px;
   display: inline-flex;
   align-items: center;
@@ -436,14 +440,24 @@ select:focus-visible {
   font-size: 0.7rem;
 }
 .week-day-strip {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  display: flex;
   gap: 7px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scroll-padding-inline: 2px;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  touch-action: pan-x;
   margin-bottom: 17px;
+}
+.week-day-strip::-webkit-scrollbar {
+  display: none;
 }
 .week-day-strip button {
   position: relative;
-  min-width: 0;
+  flex: 0 0 clamp(64px, 19.5vw, 78px);
+  min-width: 64px;
+  scroll-snap-align: center;
   height: 67px;
   display: flex;
   flex-direction: column;
@@ -455,6 +469,9 @@ select:focus-visible {
   background: rgb(255 253 247 / 74%);
   color: var(--green-dark);
   box-shadow: 0 3px 12px rgb(39 55 27 / 4%);
+}
+.week-day-strip button.is-adjacent-week:not(.is-selected) {
+  opacity: 0.72;
 }
 .week-day-strip button span {
   font-size: 0.7rem;
@@ -1971,23 +1988,34 @@ select:focus-visible {
 .ingredient-editor {
   position: relative;
   display: grid;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid #e8e3cf;
-  border-radius: 12px;
-  background: var(--card);
+  gap: 11px;
+  padding: 12px;
+  border: 1.5px solid #d3d5b5;
+  border-radius: 15px;
+  background: linear-gradient(145deg, #fffef9, #f8f6e9);
+  box-shadow: 0 5px 16px rgb(39 55 27 / 7%);
 }
 .ingredient-editor + .ingredient-editor {
-  margin-top: 8px;
+  margin-top: 13px;
 }
 .ingredient-editor-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 32px;
+  min-height: 36px;
+  margin: -3px 0 1px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid #e3e4cf;
 }
 .ingredient-editor-heading strong {
-  font-size: 0.72rem;
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #e9f0da;
+  color: var(--green-dark);
+  font-size: 0.76rem;
 }
 .ingredient-editor-heading button {
   width: 44px;
@@ -2103,6 +2131,10 @@ select:focus-visible {
   color: var(--muted);
   font-size: 0.62rem;
 }
+.ingredient-amount-row select {
+  appearance: auto;
+  cursor: pointer;
+}
 .nested-sheet {
   z-index: 30;
   place-items: end center;
@@ -2202,9 +2234,45 @@ select:focus-visible {
 }
 .step-editor {
   display: grid;
-  grid-template-columns: 27px 1fr 38px;
+  grid-template-columns: 34px 27px minmax(0, 1fr) 38px;
   gap: 7px;
   align-items: start;
+  padding: 5px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+.step-editor.is-dragging {
+  border-color: var(--green);
+  background: #eef3df;
+  box-shadow: 0 7px 18px rgb(46 88 27 / 13%);
+}
+.step-drag-handle {
+  width: 34px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  margin-top: -4px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+}
+.step-drag-handle:active {
+  cursor: grabbing;
+  background: #e9f0da;
+  color: var(--green-dark);
+}
+.step-reorder-hint {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 500;
 }
 .image-actions {
   display: grid;
@@ -2956,6 +3024,9 @@ select:focus-visible {
   font-weight: 750;
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+.toast.error {
+  background: #7b3028;
 }
 
 /* Cohesive mobile-first redesign shared by the primary flows. */
@@ -4494,7 +4565,7 @@ select:focus-visible {
 .planner-sheet {
   max-height: min(94dvh, 880px);
   padding-inline: 18px;
-  padding-bottom: max(98px, calc(env(safe-area-inset-bottom) + 88px));
+  padding-bottom: max(22px, calc(env(safe-area-inset-bottom) + 14px));
 }
 .planner-sheet .modal-header > div {
   min-width: 0;
@@ -4657,18 +4728,11 @@ select:focus-visible {
   white-space: nowrap;
 }
 .planner-confirm {
-  position: fixed;
-  z-index: 24;
-  right: 16px;
-  bottom: max(12px, env(safe-area-inset-bottom));
-  left: 16px;
-  width: auto;
-  max-width: 448px;
-  margin-inline: auto;
+  position: static;
+  width: 100%;
   min-height: 54px;
-  margin-top: 0;
+  margin-top: 16px;
   font-size: 0.92rem;
-  box-shadow: 0 -14px 28px var(--cream);
 }
 @media (max-width: 860px) {
   body {

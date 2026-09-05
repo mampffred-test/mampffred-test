@@ -45,6 +45,26 @@ export function serializeSharedRecipe(recipe: Recipe) {
   return JSON.stringify(envelope, null, 2);
 }
 
+export function formatSharedRecipeText(recipe: Recipe) {
+  const description = recipe.description.trim()
+    ? `${recipe.description.trim()}\n\n`
+    : '';
+  const ingredients = recipe.ingredients
+    .filter((ingredient) => ingredient.name.trim())
+    .map(
+      (ingredient) =>
+        `- ${[ingredient.amount, ingredient.unit, ingredient.name]
+          .filter(Boolean)
+          .join(' ')}`,
+    )
+    .join('\n');
+  const steps = recipe.steps
+    .filter((step) => step.trim())
+    .map((step, index) => `${index + 1}. ${step.trim()}`)
+    .join('\n');
+  return `${recipe.name}\n\n${description}${recipe.minutes} Min. · ${recipe.servings} ${recipe.servings === 1 ? 'Portion' : 'Portionen'}\n\nZutaten\n${ingredients}\n\nZubereitung\n${steps}`;
+}
+
 export async function parseSharedRecipe(contents: string): Promise<Recipe> {
   if (new TextEncoder().encode(contents).byteLength > MAX_SHARED_RECIPE_BYTES)
     throw new Error('SHARED_RECIPE_TOO_LARGE');
