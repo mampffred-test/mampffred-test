@@ -343,7 +343,10 @@ export async function validateImageFile(blob: Blob) {
     throw new Error('INVALID_IMAGE_DIMENSIONS');
 }
 
-export async function optimizeImage(file: Blob): Promise<Blob> {
+export async function optimizeImage(
+  file: Blob,
+  options: { maxEdge?: number; type?: 'image/jpeg' | 'image/webp' } = {},
+): Promise<Blob> {
   await validateImageFile(file);
   const bitmap = await createImageBitmap(file);
   try {
@@ -357,7 +360,7 @@ export async function optimizeImage(file: Blob): Promise<Blob> {
       bitmap.width * bitmap.height > MAX_IMAGE_PIXELS
     )
       throw new Error('INVALID_IMAGE_DIMENSIONS');
-    const max = 1600;
+    const max = options.maxEdge ?? 1600;
     const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement('canvas');
     canvas.width = Math.round(bitmap.width * scale);
@@ -369,7 +372,7 @@ export async function optimizeImage(file: Blob): Promise<Blob> {
       canvas.toBlob(
         (blob) =>
           blob ? resolve(blob) : reject(new Error('IMAGE_ENCODING_FAILED')),
-        'image/webp',
+        options.type ?? 'image/webp',
         0.82,
       ),
     );

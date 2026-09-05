@@ -1,6 +1,8 @@
 'use client';
 import { validateDataUpdate, referencedImageKeys } from '@/lib/data-updates';
 import { MIN_BACKUP_PASSWORD_LENGTH } from '@/lib/backup';
+import { FramedImage, ImageFramingEditor } from './image-framing';
+import { UnitPicker } from './unit-picker';
 
 /* oxlint-disable next/no-img-element, jsx-a11y/prefer-tag-over-role, react/immutability, react/refs, react/set-state-in-effect */
 
@@ -129,8 +131,10 @@ import {
 import {
   createSharedRecipeFile,
   createSharedRecipeUrl,
-  MAX_SHARED_RECIPE_BYTES,
+  MAX_SHARED_RECIPE_FILE_BYTES,
   parseSharedRecipe,
+  parseSharedRecipeFile,
+  type SharedRecipeImport,
   readSharedRecipeHash,
   serializeSharedRecipe,
 } from '@/lib/recipe-sharing';
@@ -196,27 +200,6 @@ const sharePreparationMessage = (error: unknown) =>
     ? 'Dieses Rezept ist zu umfangreich für einen Rezeptlink. Sichere es stattdessen als Rezeptdatei.'
     : 'Das Rezept konnte gerade nicht geteilt werden.';
 const mealSlots: MealSlot[] = ['Frühstück', 'Mittagessen', 'Abendessen'];
-const ingredientUnits = [
-  'g',
-  'kg',
-  'ml',
-  'l',
-  'TL',
-  'EL',
-  'Prise',
-  'Stück',
-  'Scheibe',
-  'Scheiben',
-  'Bund',
-  'Dose',
-  'Packung',
-  'Becher',
-  'Glas',
-  'Tasse',
-  'Zehe',
-  'Handvoll',
-  'Spritzer',
-] as const;
 const RecipeImageRequestContext = createContext<(key: string) => void>(
   () => undefined,
 );
@@ -300,12 +283,11 @@ function RecipeImage({
 
   if (storedImageUrl)
     return (
-      <img
+      <FramedImage
         className={`recipe-photo ${className}`}
         src={storedImageUrl}
         alt={`Foto von ${recipe.name}`}
-        loading="lazy"
-        decoding="async"
+        frame={recipe.imageFrame}
       />
     );
   return (
@@ -2097,6 +2079,7 @@ function RecipeDetail({
   onShare,
   shareReady,
   onExport,
+  exportBusy,
   planLabel = 'Planen',
   inactive = false,
 }: {
@@ -2111,6 +2094,7 @@ function RecipeDetail({
   onShare: () => void;
   shareReady: boolean;
   onExport: () => void;
+  exportBusy: boolean;
   planLabel?: string;
   inactive?: boolean;
 }) {
@@ -2292,8 +2276,11 @@ function RecipeDetail({
             <button onClick={onEdit}>
               <Utensils size={18} /> Bearbeiten
             </button>
-            <button onClick={onExport}>
-              <Download size={18} /> Als Rezeptdatei sichern
+            <button onClick={onExport} disabled={exportBusy}>
+              <Download size={18} />{' '}
+              {exportBusy
+                ? 'Datei wird vorbereitet …'
+                : 'Als Rezeptdatei sichern'}
             </button>
           </div>
         </div>
@@ -3111,6 +3098,7 @@ function RecipeEditor({
     mode: 'mapping' | 'amount';
   }>();
   const [file, setFile] = useState<File>();
+  const [framingOpen, setFramingOpen] = useState(false);
   const stagedImages = useRef<Record<string, Blob>>({});
   const imageSelection = useRef(0);
   const editorStopped = useRef(false);
@@ -3128,7 +3116,7 @@ function RecipeEditor({
   const [removeImage, setRemoveImage] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const amountRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const unitRefs = useRef<Record<string, HTMLSelectElement | null>>({});
+  const unitRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const foodInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [ingredientAnnouncement, setIngredientAnnouncement] = useState('');
   const draggedStepRef = useRef<number | undefined>(undefined);
@@ -3235,7 +3223,8 @@ function RecipeEditor({
   const canSave = Boolean(
     draft.name.trim() &&
     draft.ingredients.some((item) => item.name.trim()) &&
-    !proteinInvalid,
+    !proteinInvalid &&
+    !framingOpen,
   );
   const hasDraftContent = hasMeaningfulRecipeDraft(createDraftRecord());
   const displayedImage =
@@ -3488,17 +3477,25 @@ function RecipeEditor({
               <button
                 type="button"
                 className="image-drop"
-                onClick={() => inputRef.current?.click()}
+                onClick={() =>
+                  displayedImage
+                    ? setFramingOpen(true)
+                    : inputRef.current?.click()
+                }
               >
                 {displayedImage ? (
-                  <img src={displayedImage} alt="Vorschau des Rezeptbilds" />
+                  <FramedImage
+                    src={displayedImage}
+                    frame={draft.imageFrame}
+                    alt="Vorschau des Rezeptbilds"
+                  />
                 ) : (
                   <>
                     <ImagePlus size={28} />
                     <strong>Rezeptbild auswählen</strong>
                     <span>
-                      Wird verkleinert, lokal gespeichert und nur mit deiner
-                      Sicherung exportiert.
+                      Bleibt auf deinem Gerät. Beim Teilen als Rezeptdatei wird
+                      das Bild mitgegeben.
                     </span>
                   </>
                 )}
@@ -3510,6 +3507,7 @@ function RecipeEditor({
                 accept="image/jpeg,image/png,image/webp"
                 onChange={(event) => {
                   const selected = event.target.files?.[0];
+                  event.target.value = '';
                   if (!selected) return;
                   setImageError('');
                   const selection = ++imageSelection.current;
@@ -3525,8 +3523,10 @@ function RecipeEditor({
                       setDraft((current) => ({
                         ...current,
                         imageKey: draftImageKey,
+                        imageFrame: undefined,
                       }));
                       setRemoveImage(false);
+                      setFramingOpen(true);
                       setFile(
                         new File([optimized], 'rezeptbild', {
                           type: optimized.type,
@@ -3545,6 +3545,12 @@ function RecipeEditor({
                 <div className="image-actions">
                   <button
                     type="button"
+                    onClick={() => setFramingOpen(!framingOpen)}
+                  >
+                    <Pencil size={16} /> Ausschnitt anpassen
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => inputRef.current?.click()}
                   >
                     <ImagePlus size={16} /> Bild ändern
@@ -3554,11 +3560,13 @@ function RecipeEditor({
                     className="danger-text"
                     onClick={() => {
                       setFile(undefined);
+                      setFramingOpen(false);
                       setRemoveImage(true);
                       imageSelection.current += 1;
                       setDraft((current) => ({
                         ...current,
                         imageKey: undefined,
+                        imageFrame: undefined,
                       }));
                     }}
                   >
@@ -3567,6 +3575,18 @@ function RecipeEditor({
                 </div>
               )}
               {imageError && <small className="form-error">{imageError}</small>}
+              {displayedImage && framingOpen && (
+                <ImageFramingEditor
+                  key={displayedImage}
+                  src={displayedImage}
+                  initialFrame={draft.imageFrame}
+                  onCancel={() => setFramingOpen(false)}
+                  onApply={(imageFrame) => {
+                    setDraft((current) => ({ ...current, imageFrame }));
+                    setFramingOpen(false);
+                  }}
+                />
+              )}
             </details>
             <label>
               Beschreibung
@@ -3926,38 +3946,25 @@ function RecipeEditor({
                       placeholder="z. B. 250"
                     />
                   </label>
-                  <label>
-                    Einheit
-                    <select
-                      ref={(node) => {
+                  <div className="unit-field">
+                    <span>Einheit</span>
+                    <UnitPicker
+                      buttonRef={(node) => {
                         unitRefs.current[item.id ?? String(index)] = node;
                       }}
-                      aria-label={`Einheit für Zutat ${index + 1}`}
+                      label={`Einheit für Zutat ${index + 1}`}
                       value={item.unit}
-                      onChange={(event) =>
+                      onChange={(unit) =>
                         setDraft({
                           ...draft,
                           ingredients: draft.ingredients.map(
                             (entry, itemIndex) =>
-                              itemIndex === index
-                                ? { ...entry, unit: event.target.value }
-                                : entry,
+                              itemIndex === index ? { ...entry, unit } : entry,
                           ),
                         })
                       }
-                    >
-                      <option value="">Einheit wählen …</option>
-                      {item.unit &&
-                        !ingredientUnits.includes(
-                          item.unit as (typeof ingredientUnits)[number],
-                        ) && <option value={item.unit}>{item.unit}</option>}
-                      {ingredientUnits.map((unit) => (
-                        <option value={unit} key={unit}>
-                          {unit}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                    />
+                  </div>
                 </div>
               </div>
             ))}
@@ -5122,11 +5129,13 @@ function RecipeLinkDialog({
 
 function SharedRecipeDialog({
   recipe,
+  image,
   busy,
   onCancel,
   onConfirm,
 }: {
   recipe: Recipe;
+  image?: Blob;
   busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -5134,6 +5143,16 @@ function SharedRecipeDialog({
   const dialogRef = useModalFocus<HTMLElement>(() => {
     if (!busy) onCancel();
   });
+  const [imageUrl, setImageUrl] = useState<string>();
+  useEffect(() => {
+    if (!image) {
+      setImageUrl(undefined);
+      return;
+    }
+    const url = URL.createObjectURL(image);
+    setImageUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [image]);
   return (
     <div className="modal-backdrop">
       <section
@@ -5149,6 +5168,14 @@ function SharedRecipeDialog({
         </div>
         <small>Mit dir über Mampffred geteilt</small>
         <h2 id="shared-recipe-title">{recipe.name}</h2>
+        {imageUrl && (
+          <FramedImage
+            src={imageUrl}
+            frame={recipe.imageFrame}
+            alt="Geteiltes Rezeptbild"
+            className="shared-recipe-image"
+          />
+        )}
         <p id="shared-recipe-description">
           {recipe.description ||
             'Dieses Rezept kann deiner Sammlung hinzugefügt werden.'}
@@ -5680,7 +5707,9 @@ export default function MampffredApp() {
   const [planner, setPlanner] = useState<PlannerState>();
   const [plannerResume, setPlannerResume] = useState<PlannerResume>();
   const [toast, setToast] = useState<ToastState>();
-  const [sharedRecipePreview, setSharedRecipePreview] = useState<Recipe>();
+  const [sharedRecipePreview, setSharedRecipePreview] =
+    useState<SharedRecipeImport>();
+  const [exportBusy, setExportBusy] = useState(false);
   const [sharedRecipeImportBusy, setSharedRecipeImportBusy] = useState(false);
   const [shareCopyText, setShareCopyText] = useState<string>();
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
@@ -5866,7 +5895,7 @@ export default function MampffredApp() {
           contents ? parseSharedRecipe(contents) : undefined,
         )
         .then((recipe) => {
-          if (!cancelled && recipe) setSharedRecipePreview(recipe);
+          if (!cancelled && recipe) setSharedRecipePreview({ recipe });
         })
         .catch(() => {
           if (cancelled) return;
@@ -6051,9 +6080,12 @@ export default function MampffredApp() {
     setMutationError('');
     return persistCurrent();
   }
-  function setData(update: AppData | ((current: AppData) => AppData)) {
+  function setData(
+    update: AppData | ((current: AppData) => AppData),
+    images: Record<string, Blob> = {},
+  ) {
     try {
-      void commitData(update).catch(() => undefined);
+      void commitData(update, images).catch(() => undefined);
       return true;
     } catch (error) {
       setMutationError(
@@ -6418,9 +6450,15 @@ export default function MampffredApp() {
       setShareCopyText(`${text}\n${url}`);
     }
   }
-  function exportRecipeFile(recipe: Recipe) {
+  async function exportRecipeFile(recipe: Recipe) {
+    if (exportBusy) return;
+    setExportBusy(true);
     try {
-      const file = createSharedRecipeFile(recipe);
+      const image = recipe.imageKey
+        ? (pendingImages.current[recipe.imageKey] ??
+          (await loadRecipeImage(recipe.imageKey)))
+        : undefined;
+      const file = await createSharedRecipeFile(recipe, image);
       const link = document.createElement('a');
       link.href = URL.createObjectURL(file);
       link.download = file.name;
@@ -6433,38 +6471,70 @@ export default function MampffredApp() {
       showToast(
         error instanceof Error && error.message === 'SHARED_RECIPE_TOO_LARGE'
           ? 'Dieses Rezept ist für eine Rezeptdatei zu groß. Erstelle unter „Mehr“ eine vollständige Sicherung.'
-          : 'Die Rezeptdatei konnte nicht erstellt werden.',
+          : 'Die Rezeptdatei mit Bild konnte nicht erstellt werden. Bitte versuche es erneut.',
         4200,
         'error',
       );
+    } finally {
+      setExportBusy(false);
     }
   }
-  async function saveImportedRecipe(imported: Recipe) {
+  async function saveImportedRecipe(imported: Recipe, image?: Blob) {
     const existing = dataRef.current.recipes.find(
       (recipe) => recipe.shareId === imported.shareId,
     );
     if (existing) {
+      if (image && !existing.imageKey) {
+        const key = `recipe-${existing.id}-${crypto.randomUUID()}`;
+        if (
+          !setData(
+            (current) => ({
+              ...current,
+              recipes: current.recipes.map((recipe) =>
+                recipe.id === existing.id
+                  ? {
+                      ...recipe,
+                      imageKey: key,
+                      imageFrame: imported.imageFrame,
+                    }
+                  : recipe,
+              ),
+            }),
+            { [key]: image },
+          )
+        )
+          return false;
+        await lastSave.current;
+      }
       changeTab('recipes');
       setRecipePlanWeekStart(undefined);
       setSelectedRecipeId(existing.id);
-      showToast('Dieses Rezept ist bereits in deiner Sammlung.');
+      showToast(
+        image && !existing.imageKey
+          ? 'Das Bild wurde zum vorhandenen Rezept ergänzt.'
+          : 'Dieses Rezept ist bereits in deiner Sammlung.',
+      );
       return true;
     }
     const id = crypto.randomUUID();
+    const imageKey = image ? `recipe-${id}-${crypto.randomUUID()}` : undefined;
     const recipe: Recipe = {
       ...imported,
       id,
-      imageCell: Math.floor(Math.random() * 6),
+      imageKey,
       ingredients: imported.ingredients.map((ingredient) => ({
         ...ingredient,
         id: crypto.randomUUID(),
       })),
     };
     if (
-      !setData((current) => ({
-        ...current,
-        recipes: [recipe, ...current.recipes],
-      }))
+      !setData(
+        (current) => ({
+          ...current,
+          recipes: [recipe, ...current.recipes],
+        }),
+        image && imageKey ? { [imageKey]: image } : {},
+      )
     )
       return false;
     await lastSave.current;
@@ -6475,12 +6545,12 @@ export default function MampffredApp() {
     return true;
   }
   async function importRecipeFile(file: File) {
-    if (file.size > MAX_SHARED_RECIPE_BYTES) {
+    if (file.size > MAX_SHARED_RECIPE_FILE_BYTES) {
       showToast('Die Rezeptdatei ist zu groß.', 4200);
       return;
     }
     try {
-      const imported = await parseSharedRecipe(await file.text());
+      const imported = await parseSharedRecipeFile(await file.text());
       setSharedRecipePreview(imported);
     } catch {
       showToast(
@@ -6494,7 +6564,12 @@ export default function MampffredApp() {
     if (!sharedRecipePreview || sharedRecipeImportBusy) return;
     setSharedRecipeImportBusy(true);
     try {
-      if (await saveImportedRecipe(sharedRecipePreview))
+      if (
+        await saveImportedRecipe(
+          sharedRecipePreview.recipe,
+          sharedRecipePreview.image,
+        )
+      )
         setSharedRecipePreview(undefined);
     } catch {
       showToast(
@@ -7273,7 +7348,8 @@ export default function MampffredApp() {
               }
               onShare={() => void shareRecipe(selectedRecipe)}
               shareReady={preparedShareLink?.recipe === selectedRecipe}
-              onExport={() => exportRecipeFile(selectedRecipe)}
+              onExport={() => void exportRecipeFile(selectedRecipe)}
+              exportBusy={exportBusy}
               inactive={Boolean(
                 editorRecipeId ||
                 planner ||
@@ -7393,7 +7469,8 @@ export default function MampffredApp() {
           )}
           {sharedRecipePreview && (
             <SharedRecipeDialog
-              recipe={sharedRecipePreview}
+              recipe={sharedRecipePreview.recipe}
+              image={sharedRecipePreview.image}
               busy={sharedRecipeImportBusy}
               onCancel={() => setSharedRecipePreview(undefined)}
               onConfirm={() => void confirmSharedRecipeImport()}

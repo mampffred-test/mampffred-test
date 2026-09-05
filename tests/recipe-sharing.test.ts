@@ -8,7 +8,9 @@ import {
   formatSharedRecipeText,
   MAX_SHARED_RECIPE_LINK_CHARS,
   MAX_SHARED_RECIPE_BYTES,
+  MAX_SHARED_RECIPE_FILE_BYTES,
   parseSharedRecipe,
+  parseSharedRecipeFile,
   readSharedRecipeHash,
   serializeSharedRecipe,
   sharedRecipeFileName,
@@ -115,12 +117,12 @@ test('bildet Dateinamen ohne Pfad-, Steuer- oder Bidi-Zeichen', () => {
 
 test('eine exportierte Rezeptdatei lässt sich wieder importieren', async () => {
   const source = createSampleRecipes()[0];
-  const file = createSharedRecipeFile(source);
+  const file = await createSharedRecipeFile(source);
   const exported = await file.text();
   assert.equal(file.name, sharedRecipeFileName(source.name));
   assert.equal(file.type, 'application/json');
 
-  const imported = await parseSharedRecipe(exported);
+  const { recipe: imported } = await parseSharedRecipeFile(exported);
 
   assert.equal(imported.name, source.name);
   assert.deepEqual(
@@ -130,12 +132,74 @@ test('eine exportierte Rezeptdatei lässt sich wieder importieren', async () => 
   assert.match(imported.shareId, /^imported:[a-f0-9]{64}$/);
 });
 
-test('erstellt keine Rezeptdatei, die der eigene Import wegen Übergröße ablehnt', () => {
+test('behält Standardbilder in Links und Dateien bei unveränderter Textidentität', async () => {
+  const source = { ...createSampleRecipes()[0], imageCell: 4 };
+  const parsed = await parseSharedRecipe(serializeSharedRecipe(source));
+  const legacy = JSON.parse(serializeSharedRecipe(source));
+  delete legacy.imageCell;
+  assert.equal(parsed.imageCell, 4);
+  assert.equal(
+    parsed.shareId,
+    (await parseSharedRecipe(JSON.stringify(legacy))).shareId,
+  );
+  const file = await createSharedRecipeFile(source);
+  assert.equal(
+    (await parseSharedRecipeFile(await file.text())).recipe.imageCell,
+    4,
+  );
+  assert.equal(
+    (await parseSharedRecipeFile(JSON.stringify(legacy))).recipe.imageCell,
+    0,
+  );
+});
+
+test('exportiert keine unvollständige Datei bei fehlendem Foto', async () => {
+  await assert.rejects(
+    () =>
+      createSharedRecipeFile({
+        ...createSampleRecipes()[0],
+        imageKey: 'missing',
+      }),
+    /MISSING_RECIPE_IMAGE/,
+  );
+});
+
+test('weist übergroße oder formatfremde Bilddateien vor dem Decodieren zurück', async () => {
+  const envelope = {
+    ...JSON.parse(serializeSharedRecipe(createSampleRecipes()[0])),
+    version: 2,
+    image: { type: 'image/svg+xml', data: 'YWJj' },
+  };
+  await assert.rejects(
+    () => parseSharedRecipeFile(JSON.stringify(envelope)),
+    /INVALID_SHARED_IMAGE/,
+  );
+  await assert.rejects(
+    () => parseSharedRecipeFile(' '.repeat(MAX_SHARED_RECIPE_FILE_BYTES + 1)),
+    /SHARED_RECIPE_TOO_LARGE/,
+  );
+  await assert.rejects(
+    () =>
+      parseSharedRecipeFile(
+        JSON.stringify({
+          ...envelope,
+          image: { type: 'image/jpeg', data: 'A'.repeat(1_333_335) },
+        }),
+      ),
+    /INVALID_SHARED_IMAGE/,
+  );
+  await assert.rejects(
+    () => parseSharedRecipeFile(JSON.stringify({ ...envelope, version: 99 })),
+    /INVALID_SHARED_RECIPE/,
+  );
+});
+
+test('erstellt keine Rezeptdatei, die der eigene Import wegen Übergröße ablehnt', async () => {
   const source = {
     ...createSampleRecipes()[0],
     steps: Array.from({ length: 110 }, () => 'a'.repeat(4990)),
   };
-  assert.throws(
+  await assert.rejects(
     () => createSharedRecipeFile(source),
     /SHARED_RECIPE_TOO_LARGE/,
   );

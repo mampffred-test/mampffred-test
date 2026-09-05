@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import ts from 'typescript';
 import {
   createSharedRecipeUrl,
-  parseSharedRecipe,
+  parseSharedRecipeFile,
 } from '../lib/recipe-sharing.ts';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -184,6 +184,57 @@ try {
     return 'PASS: atomic rollback, shared image retention, undo retention, orphan cleanup, reencoding, decoded dimension guard';
   });
   console.log(result);
+  const photoFixture = await page.evaluate(async () => {
+    const sharing = await import('/__modules/lib/recipe-sharing.ts');
+    const { createSampleRecipes } = await import('/__modules/lib/model.ts');
+    const canvas = document.createElement('canvas');
+    canvas.width = 1600;
+    canvas.height = 1000;
+    const painter = canvas.getContext('2d');
+    painter.fillStyle = '#e36e42';
+    painter.fillRect(0, 0, 800, 1000);
+    painter.fillStyle = '#72a144';
+    painter.fillRect(800, 0, 800, 1000);
+    const photo = await new Promise((resolve) =>
+      canvas.toBlob(resolve, 'image/png'),
+    );
+    const recipe = {
+      ...createSampleRecipes()[0],
+      name: 'Foto-Testrezept',
+      imageKey: 'private-key-never-exported',
+      imageFrame: { x: 0.2, y: 0.7, zoom: 1.5 },
+    };
+    const exported = await sharing.createSharedRecipeFile(recipe, photo);
+    const contents = await exported.text();
+    const parsed = await sharing.parseSharedRecipeFile(contents);
+    if (
+      !parsed.image ||
+      parsed.image.type !== 'image/jpeg' ||
+      parsed.recipe.imageFrame.zoom !== 1.5 ||
+      contents.includes(recipe.imageKey)
+    )
+      throw new Error('image roundtrip failed');
+    const bitmap = await createImageBitmap(parsed.image);
+    if (bitmap.width > 1200 || bitmap.height > 1200)
+      throw new Error('image not resized');
+    bitmap.close();
+    const invalid = JSON.parse(contents);
+    invalid.image.data = 'YWJj';
+    let rejected = false;
+    try {
+      await sharing.parseSharedRecipeFile(JSON.stringify(invalid));
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) throw new Error('invalid image accepted');
+    const text = JSON.parse(contents);
+    delete text.image;
+    text.version = 1;
+    return { contents, text: JSON.stringify(text), frame: recipe.imageFrame };
+  });
+  console.log(
+    'PASS: versioned image-file roundtrip, resize, framing, private-key omission and malformed-image rejection',
+  );
   await page.close();
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
@@ -324,17 +375,17 @@ try {
     /^mampffred-.+\.mampffred-rezept$/,
   );
   const exportedBytes = await readFile(await download.path());
-  const exported = await parseSharedRecipe(exportedBytes.toString());
+  const { recipe: exported } = await parseSharedRecipeFile(
+    exportedBytes.toString(),
+  );
   assert.equal(exported.name, 'Haferporridge mit Beeren');
   await app.getByRole('button', { name: 'Zurück', exact: true }).click();
   const importFile = () =>
-    app
-      .locator('input[accept*=".mampffred-rezept"]')
-      .setInputFiles({
-        name: download.suggestedFilename(),
-        mimeType: 'application/json',
-        buffer: exportedBytes,
-      });
+    app.locator('input[accept*=".mampffred-rezept"]').setInputFiles({
+      name: download.suggestedFilename(),
+      mimeType: 'application/json',
+      buffer: exportedBytes,
+    });
   const preview = app
     .getByRole('dialog')
     .filter({ hasText: 'Mit dir über Mampffred geteilt' });
@@ -370,6 +421,7 @@ try {
   );
   await app.getByRole('button', { name: 'Zurück', exact: true }).click();
   const longEnvelope = JSON.parse(exportedBytes.toString());
+  longEnvelope.version = 1;
   longEnvelope.recipe.name = 'L'.repeat(200);
   longEnvelope.recipe.description = 'D'.repeat(5000);
   const longLink = await createSharedRecipeUrl(
@@ -407,6 +459,144 @@ try {
   assert.equal(errors.length, 0, errors.join('\n'));
   console.log(
     'PASS: share activation, abort, clipboard retry, actual file download, preview/cancel/confirm, link/file deduplication, malformed link and landscape layout',
+  );
+  const choosePhotoFile = (contents) =>
+    app.locator('input[accept*=".mampffred-rezept"]').setInputFiles({
+      name: 'foto.mampffred-rezept',
+      mimeType: 'application/json',
+      buffer: Buffer.from(contents),
+    });
+  await choosePhotoFile(photoFixture.contents);
+  await preview.getByAltText('Geteiltes Rezeptbild').waitFor();
+  await app.screenshot({ path: 'outputs/security/photo-import-preview.png' });
+  await preview.getByRole('button', { name: 'Abbrechen', exact: true }).click();
+  assert.equal(
+    (await storedRecipes()).some((recipe) => recipe.name === 'Foto-Testrezept'),
+    false,
+  );
+  await choosePhotoFile(photoFixture.text);
+  await preview
+    .getByRole('button', { name: 'Rezept hinzufügen', exact: true })
+    .click();
+  await preview.waitFor({ state: 'hidden' });
+  await app.getByRole('button', { name: 'Zurück', exact: true }).click();
+  await choosePhotoFile(photoFixture.contents);
+  await preview.getByAltText('Geteiltes Rezeptbild').waitFor();
+  await preview
+    .getByRole('button', { name: 'Rezept hinzufügen', exact: true })
+    .click();
+  await preview.waitFor({ state: 'hidden' });
+  const importedPhotos = (await storedRecipes()).filter(
+    (recipe) => recipe.name === 'Foto-Testrezept',
+  );
+  assert.equal(
+    importedPhotos.length,
+    1,
+    'photo upgrade must not duplicate text import',
+  );
+  assert.ok(importedPhotos[0].imageKey);
+  assert.deepEqual(importedPhotos[0].imageFrame, photoFixture.frame);
+  await app
+    .getByRole('button', { name: 'Rezept bearbeiten', exact: true })
+    .click();
+  await app
+    .getByRole('button', { name: 'Ausschnitt anpassen', exact: false })
+    .click();
+  const zoom = app.getByRole('slider', { name: 'Bild vergrößern' });
+  await zoom.focus();
+  await zoom.press('End');
+  const pan = app.getByRole('button', {
+    name: 'Bild verschieben; alternativ Pfeiltasten verwenden',
+    exact: true,
+  });
+  await pan.press('ArrowLeft');
+  const panBounds = await pan.boundingBox();
+  const beforeDrag = await pan.locator('img').getAttribute('style');
+  await app.mouse.move(panBounds.x + 100, panBounds.y + 100);
+  await app.mouse.down();
+  await app.mouse.move(panBounds.x + 140, panBounds.y + 110, { steps: 4 });
+  await app.mouse.up();
+  assert.notEqual(await pan.locator('img').getAttribute('style'), beforeDrag);
+  await app.locator('.image-framing-editor').scrollIntoViewIfNeeded();
+  await app.screenshot({ path: 'outputs/security/photo-framing-mobile.png' });
+  await app.getByRole('button', { name: 'Übernehmen', exact: true }).click();
+  const unit = app.getByRole('button', {
+    name: 'Einheit für Zutat 1',
+    exact: true,
+  });
+  await unit.click();
+  const units = app.getByRole('listbox', {
+    name: 'Einheit für Zutat 1',
+    exact: true,
+  });
+  await units.waitFor();
+  const bounds = await units.boundingBox();
+  assert.ok(
+    bounds.width <= 280 && bounds.x >= 0 && bounds.x + bounds.width <= 390,
+  );
+  assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= 844);
+  await app.screenshot({ path: 'outputs/security/units-mobile.png' });
+  await units.getByRole('option', { name: 'EL', exact: true }).click();
+  assert.equal(await unit.textContent(), 'EL');
+  await unit.click();
+  await units.getByRole('option', { name: 'EL', exact: true }).press('Escape');
+  await units.waitFor({ state: 'hidden' });
+  await app.getByRole('dialog', { name: /^Rezept bearbeiten/ }).waitFor();
+  await app
+    .getByRole('button', { name: 'Rezept speichern', exact: true })
+    .first()
+    .click();
+  await app
+    .getByRole('dialog', { name: /^Rezept bearbeiten/ })
+    .waitFor({ state: 'hidden' });
+  const framed = (await storedRecipes()).find(
+    (recipe) => recipe.name === 'Foto-Testrezept',
+  );
+  assert.equal(framed.imageFrame.zoom, 3);
+  assert.notEqual(framed.imageFrame.x, photoFixture.frame.x);
+  assert.equal(
+    framed.imageKey,
+    importedPhotos[0].imageKey,
+    'framing preserves original blob',
+  );
+  const photoDownloadReady = app.waitForEvent('download');
+  await app
+    .getByRole('button', { name: 'Als Rezeptdatei sichern', exact: true })
+    .click();
+  const photoDownload = await photoDownloadReady;
+  const photoExport = JSON.parse(
+    (await readFile(await photoDownload.path())).toString(),
+  );
+  assert.equal(photoExport.version, 2);
+  assert.equal(photoExport.image.type, 'image/jpeg');
+  assert.deepEqual(photoExport.image.frame, framed.imageFrame);
+  await app
+    .getByRole('button', { name: 'Rezept bearbeiten', exact: true })
+    .click();
+  await app
+    .getByRole('button', { name: 'Ausschnitt anpassen', exact: false })
+    .click();
+  await app.getByRole('button', { name: 'Zurücksetzen', exact: true }).click();
+  await app
+    .locator('.image-framing-editor')
+    .getByRole('button', { name: 'Abbrechen', exact: true })
+    .click();
+  await app
+    .getByRole('button', { name: 'Rezept speichern', exact: true })
+    .first()
+    .click();
+  await app
+    .getByRole('dialog', { name: /^Rezept bearbeiten/ })
+    .waitFor({ state: 'hidden' });
+  assert.deepEqual(
+    (await storedRecipes()).find((recipe) => recipe.name === 'Foto-Testrezept')
+      .imageFrame,
+    framed.imageFrame,
+  );
+  await app.getByRole('button', { name: 'Zurück', exact: true }).click();
+  assert.equal(errors.length, 0, errors.join('\n'));
+  console.log(
+    'PASS: image preview/cancel, image upgrade, persistent nondestructive framing, unit picker and keyboard escape, image download and crop cancellation',
   );
   await app
     .getByRole('button', { name: 'Rezept hinzufügen', exact: true })
@@ -531,6 +721,7 @@ try {
               id: `full-${i}`,
               shareId: `full-${i}`,
               name: `Rezept ${i}`,
+              imageKey: undefined,
             }));
             data.plan = [];
             store.put(data, 'state');
@@ -548,13 +739,11 @@ try {
     .getByRole('navigation', { name: 'Hauptnavigation' })
     .getByRole('button', { name: 'Rezepte', exact: true })
     .click();
-  await app
-    .locator('input[accept*=".mampffred-rezept"]')
-    .setInputFiles({
-      name: 'extra.mampffred-rezept',
-      mimeType: 'application/json',
-      buffer: Buffer.from(JSON.stringify(importEnvelope)),
-    });
+  await app.locator('input[accept*=".mampffred-rezept"]').setInputFiles({
+    name: 'extra.mampffred-rezept',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(importEnvelope)),
+  });
   await app
     .getByRole('dialog')
     .filter({ hasText: 'Mit dir über Mampffred geteilt' })

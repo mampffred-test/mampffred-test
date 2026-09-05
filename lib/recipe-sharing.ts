@@ -5,8 +5,13 @@ import {
   sanitizeImportedTextList,
 } from './imported-text.ts';
 import { visibleRecipeTags } from './recipe-filter.ts';
+import { validateImageFrame } from './image-frame.ts';
+import { optimizeImage } from './storage.ts';
 
 export const MAX_SHARED_RECIPE_BYTES = 500_000;
+export const MAX_SHARED_RECIPE_FILE_BYTES = 2_000_000;
+export const MAX_SHARED_IMAGE_BYTES = 1_000_000;
+export type SharedRecipeImport = { recipe: Recipe; image?: Blob };
 // Die komprimierte Größe hängt vom Inhalt ab. Umfangreiche Rezepte können das
 // Linkbudget überschreiten und müssen dann als Datei übertragen werden.
 export const MAX_SHARED_RECIPE_LINK_CHARS = 8_000;
@@ -15,6 +20,7 @@ type SharedRecipeEnvelope = {
   format: 'mampffred-recipe';
   version: 1;
   shareId: string;
+  imageCell?: number;
   recipe: {
     name: string;
     description: string;
@@ -35,6 +41,7 @@ export function serializeSharedRecipe(recipe: Recipe) {
     format: 'mampffred-recipe',
     version: 1,
     shareId: recipe.shareId,
+    ...(!recipe.imageKey ? { imageCell: recipe.imageCell } : {}),
     recipe: {
       name: recipe.name,
       description: recipe.description,
@@ -52,13 +59,76 @@ export function serializeSharedRecipe(recipe: Recipe) {
   return JSON.stringify(envelope, null, 2);
 }
 
-export function createSharedRecipeFile(recipe: Recipe) {
-  const contents = serializeSharedRecipe(recipe);
-  if (new TextEncoder().encode(contents).byteLength > MAX_SHARED_RECIPE_BYTES)
+export async function createSharedRecipeFile(recipe: Recipe, image?: Blob) {
+  const text = serializeSharedRecipe(recipe);
+  if (new TextEncoder().encode(text).byteLength > MAX_SHARED_RECIPE_BYTES)
+    throw new Error('SHARED_RECIPE_TOO_LARGE');
+  if (recipe.imageKey && !image) throw new Error('MISSING_RECIPE_IMAGE');
+  const envelope = { ...JSON.parse(text), version: 2 };
+  if (image) {
+    const optimized = await optimizeImage(image, {
+      maxEdge: 1200,
+      type: 'image/jpeg',
+    });
+    if (optimized.size > MAX_SHARED_IMAGE_BYTES)
+      throw new Error('SHARED_IMAGE_TOO_LARGE');
+    envelope.image = {
+      type: optimized.type,
+      data: bytesToBase64Url(new Uint8Array(await optimized.arrayBuffer())),
+      ...(recipe.imageFrame
+        ? { frame: validateImageFrame(recipe.imageFrame) }
+        : {}),
+    };
+  }
+  const contents = JSON.stringify(envelope);
+  if (
+    new TextEncoder().encode(contents).byteLength > MAX_SHARED_RECIPE_FILE_BYTES
+  )
     throw new Error('SHARED_RECIPE_TOO_LARGE');
   return new File([contents], sharedRecipeFileName(recipe.name), {
     type: 'application/json',
   });
+}
+
+export async function parseSharedRecipeFile(
+  contents: string,
+): Promise<SharedRecipeImport> {
+  if (
+    new TextEncoder().encode(contents).byteLength > MAX_SHARED_RECIPE_FILE_BYTES
+  )
+    throw new Error('SHARED_RECIPE_TOO_LARGE');
+  const envelope: unknown = JSON.parse(contents);
+  if (!isRecord(envelope)) throw new Error('INVALID_SHARED_RECIPE');
+  if (envelope.version === 1)
+    return { recipe: await parseSharedRecipe(contents) };
+  if (envelope.version !== 2) throw new Error('INVALID_SHARED_RECIPE');
+  const { image, ...text } = envelope;
+  const recipe = await parseSharedRecipe(
+    JSON.stringify({ ...text, version: 1 }),
+  );
+  if (image === undefined) return { recipe };
+  if (
+    !isRecord(image) ||
+    !['image/jpeg', 'image/png', 'image/webp'].includes(String(image.type)) ||
+    typeof image.data !== 'string' ||
+    image.data.length > Math.ceil((MAX_SHARED_IMAGE_BYTES * 4) / 3)
+  )
+    throw new Error('INVALID_SHARED_IMAGE');
+  const bytes = base64UrlToBytes(image.data);
+  if (bytes.byteLength > MAX_SHARED_IMAGE_BYTES)
+    throw new Error('SHARED_IMAGE_TOO_LARGE');
+  const imageFrame =
+    image.frame === undefined ? undefined : validateImageFrame(image.frame);
+  const optimized = await optimizeImage(
+    new Blob([bytes], { type: String(image.type) }),
+    { maxEdge: 1200, type: 'image/jpeg' },
+  );
+  if (optimized.size > MAX_SHARED_IMAGE_BYTES)
+    throw new Error('SHARED_IMAGE_TOO_LARGE');
+  return {
+    recipe: { ...recipe, ...(imageFrame ? { imageFrame } : {}) },
+    image: optimized,
+  };
 }
 
 // Der Rezeptname stammt moeglicherweise aus einem fremden Link. Es ueberleben nur
@@ -199,6 +269,14 @@ export async function parseSharedRecipe(contents: string): Promise<Recipe> {
   )
     throw new Error('INVALID_SHARED_RECIPE');
   const recipe = envelope.recipe;
+  const imageCell = envelope.imageCell ?? 0;
+  if (
+    typeof imageCell !== 'number' ||
+    !Number.isInteger(imageCell) ||
+    imageCell < 0 ||
+    imageCell > 5
+  )
+    throw new Error('INVALID_SHARED_RECIPE');
   if (!Array.isArray(recipe.ingredients))
     throw new Error('INVALID_SHARED_RECIPE');
 
@@ -223,7 +301,7 @@ export async function parseSharedRecipe(contents: string): Promise<Recipe> {
           };
         }),
         steps: sanitizeImportedTextList(recipe.steps),
-        imageCell: 0,
+        imageCell,
       },
     ],
   }).recipes[0];

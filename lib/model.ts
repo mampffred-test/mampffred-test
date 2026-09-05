@@ -1,3 +1,4 @@
+import { validateImageFrame } from './image-frame.ts';
 import {
   addLocalDays,
   parseLocalDate,
@@ -98,6 +99,7 @@ export type Recipe = {
   steps: string[];
   imageCell: number;
   imageKey?: string;
+  imageFrame?: import('./image-frame.ts').ImageFrame;
   favorite?: boolean;
   nutrition?: RecipeNutrition;
 };
@@ -577,6 +579,9 @@ function migrateRecipe(value: unknown, legacyNutrition: boolean): Recipe {
     }),
     steps: expectStringArray(value.steps),
     imageCell: expectNumber(value.imageCell),
+    ...(value.imageFrame !== undefined
+      ? { imageFrame: validateImageFrame(value.imageFrame) }
+      : {}),
     ...(typeof value.imageKey === 'string'
       ? { imageKey: expectString(value.imageKey) }
       : {}),
