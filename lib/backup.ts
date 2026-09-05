@@ -149,9 +149,11 @@ function quarantineImportedData(data: AppData): AppData {
     recipe: T,
   ): T => ({
     ...recipe,
-    ingredients: recipe.ingredients.map(
-      ({ foodLink: _, ...ingredient }) => ingredient,
-    ),
+    ingredients: recipe.ingredients.map((sourceIngredient) => {
+      const { foodLink, ...ingredient } = sourceIngredient;
+      void foodLink;
+      return ingredient;
+    }),
     ...(recipe.nutrition
       ? {
           nutrition: {

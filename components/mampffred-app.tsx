@@ -2,7 +2,7 @@
 import { validateDataUpdate, referencedImageKeys } from '@/lib/data-updates';
 import { MIN_BACKUP_PASSWORD_LENGTH } from '@/lib/backup';
 
-/* oxlint-disable next/no-img-element, jsx-a11y/prefer-tag-over-role, react/react-compiler */
+/* oxlint-disable next/no-img-element, jsx-a11y/prefer-tag-over-role, react/immutability, react/refs, react/set-state-in-effect */
 
 import {
   ArrowLeft,
