@@ -1,0 +1,36 @@
+{
+  "name": "mampffred",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/verify-build.mjs",
+    "preview:static": "node scripts/serve-static.mjs",
+    "start": "npm run preview:static",
+    "lint": "oxlint src components/mampffred-app.tsx lib/model.ts lib/data-updates.ts lib/storage.ts lib/backup.ts lib/local-date.ts lib/nutrition.ts lib/food-nutrition.ts lib/recipe-drafts.ts lib/recipe-filter.ts lib/recipe-sharing.ts lib/ui-history.ts lib/shopping-undo.ts lib/bls-catalog.ts public/sw.js scripts vite.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts",
+    "check": "npm run lint && npm run typecheck",
+    "format": "oxfmt"
+  },
+  "dependencies": {
+    "lucide-react": "1.31.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "oxfmt": "0.61.0",
+    "oxlint": "1.76.0",
+    "oxlint-tsgolint": "7.0.2001",
+    "typescript": "5.9.3",
+    "vite": "^8.2.2"
+  },
+  "type": "module"
+}
