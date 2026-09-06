@@ -137,9 +137,15 @@ export function sharedRecipeInbox(baseUrl: string) {
   };
   return {
     async read(id: string) {
+      if (/^error(?:-[A-Z_]+)?$/u.test(id))
+        throw new Error(`INCOMING_${id.slice(6) || 'TRANSPORT'}`);
       const url = key(id);
-      const cache = await caches.open(name);
-      const response = await cache.match(url);
+      const response = await caches
+        .open(name)
+        .then((cache) => cache.match(url))
+        .catch(() => {
+          throw new Error('INCOMING_STORAGE');
+        });
       if (
         !response ||
         Date.now() - Number(response.headers.get('X-Received-At')) > 86_400_000
@@ -155,6 +161,39 @@ export function sharedRecipeInbox(baseUrl: string) {
       await (await caches.open(name)).delete(url);
     },
   };
+}
+
+export function recipeImportErrorMessage(error: unknown): string {
+  const code = error instanceof Error ? error.message : '';
+  switch (code) {
+    case 'INCOMING_NO_FILE':
+      return 'Es ist keine Rezeptdatei angekommen. Lade die Datei in WhatsApp vollständig herunter und teile die Nachricht erneut mit Mampffred. Du kannst die Datei auch hier auswählen.';
+    case 'INCOMING_NO_RECIPE':
+      return 'Es ist nur Text angekommen, aber keine erkennbare Mampffred-Rezeptdatei. Teile die Nachricht mit dem Dateianhang erneut oder wähle die Rezeptdatei hier aus.';
+    case 'INCOMING_MULTIPLE':
+      return 'Es sind mehrere Rezepte angekommen. Bitte teile jeweils nur eine Rezeptnachricht. Der Begleittext darf dabei bleiben.';
+    case 'INCOMING_SIZE':
+    case 'SHARED_RECIPE_TOO_LARGE':
+    case 'SHARED_IMAGE_TOO_LARGE':
+      return 'Die Rezeptdatei oder das enthaltene Bild ist zu groß. Bitte die absendende Person, das Rezept mit Mampffred erneut zu teilen. Rezeptdateien dürfen höchstens 2 MB groß sein.';
+    case 'INCOMING_INBOX_FULL':
+      return 'Es warten bereits mehrere Rezepte auf den Import. Füge die geöffneten Rezeptvorschauen hinzu oder schließe sie und teile die Nachricht danach erneut.';
+    case 'INCOMING_STORAGE':
+      return 'Mampffred konnte die empfangene Datei auf diesem Gerät nicht zwischenspeichern. Prüfe den freien Gerätespeicher und versuche es erneut.';
+    case 'EXPIRED_INCOMING_RECIPE':
+      return 'Diese Rezeptdatei ist nicht mehr zum Import verfügbar. Bitte teile die Nachricht erneut oder wähle die gespeicherte Datei hier aus.';
+    case 'INVALID_SHARED_IMAGE':
+    case 'INVALID_IMAGE_FILE':
+    case 'INVALID_IMAGE_DIMENSIONS':
+    case 'INVALID_IMAGE_FRAME':
+    case 'IMAGE_PROCESSING_FAILED':
+    case 'IMAGE_ENCODING_FAILED':
+      return 'Das Bild in der Rezeptdatei konnte nicht gelesen werden. Bitte die absendende Person, das Bild in Mampffred neu auszuwählen und das Rezept erneut zu teilen.';
+    case 'INCOMING_TRANSPORT':
+      return 'Die Übergabe an Mampffred ist fehlgeschlagen. Bitte teile die Nachricht erneut oder wähle die gespeicherte Rezeptdatei hier aus.';
+    default:
+      return 'Diese Datei ist keine gültige oder unterstützte Mampffred-Rezeptdatei. Bitte die absendende Person, das Rezept mit einer aktuellen Mampffred-Version erneut zu teilen.';
+  }
 }
 
 export async function parseSharedRecipeFile(

@@ -206,7 +206,10 @@ try {
       imageKey: 'private-key-never-exported',
       imageFrame: { x: 0.2, y: 0.7, zoom: 1.5 },
     };
-    const exported = await sharing.createSharedRecipeTransferFile(recipe, photo);
+    const exported = await sharing.createSharedRecipeTransferFile(
+      recipe,
+      photo,
+    );
     const contents = await exported.text();
     const parsed = await sharing.parseSharedRecipeFile(contents);
     if (
@@ -631,24 +634,51 @@ try {
   );
   // Simulate the OS multipart navigation through the real installed worker.
   // The app CSP blocks fetch, so this deliberately uses the share-target form path.
-  const receiveFile = async (contents, target = app) => {
-    await target.evaluate((text) => {
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = '/receive-share';
-      form.enctype = 'multipart/form-data';
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.name = 'recipe';
-      const transfer = new DataTransfer();
-      transfer.items.add(
-        new File([text], 'rezept.mampffred-rezept.txt', { type: 'text/plain' }),
-      );
-      input.files = transfer.files;
-      form.append(input);
-      document.body.append(form);
-      form.submit();
-    }, contents);
+  const receiveFile = async (contents, target = app, mode = 'file') => {
+    await target.evaluate(
+      ({ text, mode }) => {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/receive-share';
+        form.enctype = 'multipart/form-data';
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.name = 'recipe';
+        const transfer = new DataTransfer();
+        if (mode === 'legacy-caption' || mode === 'caption-only')
+          transfer.items.add(
+            new File(
+              ['Rezept für Mampffred – ein vorhandenes Foto ist enthalten.'],
+              'shared.txt',
+              { type: 'text/plain' },
+            ),
+          );
+        if (mode !== 'caption-only' && mode !== 'missing')
+          transfer.items.add(
+            new File([text], 'rezept.mampffred-rezept.txt', {
+              type: 'text/plain',
+            }),
+          );
+        if (mode === 'multiple')
+          transfer.items.add(
+            new File([text], 'zweites.txt', { type: 'text/plain' }),
+          );
+        input.files = transfer.files;
+        form.append(input);
+        if (mode === 'caption-fields') {
+          for (const name of ['text', 'title']) {
+            const field = document.createElement('input');
+            field.name = name;
+            field.value = 'Nachricht mit Begleittext';
+            form.append(field);
+          }
+        }
+        document.body.append(form);
+        form.submit();
+      },
+      { text: contents, mode },
+    );
     await target.waitForURL(/\?incoming=/);
   };
   await context.setOffline(true);
@@ -683,10 +713,53 @@ try {
     async () =>
       (await (await caches.open('mampffred-%2F-inbox')).keys()).length === 0,
   );
-  await receiveFile('not a recipe');
-  await app
-    .getByText(/Das geteilte Rezept konnte nicht geöffnet werden/)
-    .waitFor();
+  for (const mode of ['legacy-caption', 'caption-fields']) {
+    await receiveFile(photoFixture.contents, app, mode);
+    await receivedDialog.waitFor();
+    await receivedDialog.locator('.framed-image img').waitFor();
+    await receivedDialog
+      .getByRole('button', { name: 'Abbrechen', exact: true })
+      .click();
+  }
+  const importError = app.getByRole('dialog', {
+    name: 'Rezept konnte nicht geöffnet werden',
+  });
+  for (const [mode, message] of [
+    ['caption-only', 'Es ist nur Text angekommen'],
+    ['missing', 'Es ist keine Rezeptdatei angekommen'],
+    ['multiple', 'Es sind mehrere Rezepte angekommen'],
+  ]) {
+    await receiveFile(photoFixture.contents, app, mode);
+    await importError.getByText(new RegExp(message)).waitFor();
+    await importError
+      .getByRole('button', { name: 'Schließen', exact: true })
+      .click();
+  }
+  await receiveFile('{invalid');
+  await importError.getByText(/keine gültige oder unterstützte/).waitFor();
+  await new Promise((resolve) => setTimeout(resolve, 4500));
+  assert.equal(
+    await importError.isVisible(),
+    true,
+    'import errors must remain visible',
+  );
+  await app.screenshot({ path: 'outputs/security/recipe-import-error.png' });
+  const chooser = app.waitForEvent('filechooser');
+  await importError
+    .getByRole('button', { name: 'Rezeptdatei auswählen', exact: true })
+    .click();
+  await (
+    await chooser
+  ).setFiles({
+    name: 'rezept.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from(photoFixture.contents),
+  });
+  await receivedDialog.waitFor();
+  await receivedDialog.locator('.framed-image img').waitFor();
+  await receivedDialog
+    .getByRole('button', { name: 'Abbrechen', exact: true })
+    .click();
   await app.waitForFunction(
     async () =>
       (await (await caches.open('mampffred-%2F-inbox')).keys()).length === 0,
@@ -700,11 +773,19 @@ try {
   await receiveFile(photoFixture.contents, otherWindow);
   await receivedDialog.waitFor();
   await otherWindow
-    .getByRole('heading', { name: 'Dein Rezept ist bereit.' })
+    .getByRole('heading', { name: 'Deine Nachricht ist angekommen.' })
     .waitFor();
   await otherWindow.getByRole('button', { name: 'Zur geöffneten App' }).click();
   await receivedDialog
     .getByRole('button', { name: 'Abbrechen', exact: true })
+    .click();
+  await receiveFile(photoFixture.contents, otherWindow, 'caption-only');
+  await importError.getByText(/Es ist nur Text angekommen/).waitFor();
+  await otherWindow
+    .getByRole('button', { name: 'Zur geöffneten App' })
+    .waitFor();
+  await importError
+    .getByRole('button', { name: 'Schließen', exact: true })
     .click();
   await otherWindow.close();
   await app.waitForFunction(

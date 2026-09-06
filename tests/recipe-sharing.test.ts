@@ -15,7 +15,35 @@ import {
   readSharedRecipeHash,
   serializeSharedRecipe,
   sharedRecipeFileName,
+  sharedRecipeInbox,
+  recipeImportErrorMessage,
 } from '../lib/recipe-sharing.ts';
+
+test('Empfangsfehler brauchen keinen Cachezugriff und zeigen ausschließlich verständliche Meldungen', async () => {
+  const inbox = sharedRecipeInbox('https://example.test/app/');
+  for (const [id, expected] of [
+    ['error-NO_FILE', /keine Rezeptdatei angekommen/],
+    ['error-NO_RECIPE', /nur Text angekommen/],
+    ['error-MULTIPLE', /mehrere Rezepte/],
+    ['error-SIZE', /zu groß/],
+    ['error-INBOX_FULL', /bereits mehrere Rezepte/],
+    ['error-STORAGE', /nicht zwischenspeichern/],
+    ['error', /Übergabe/],
+  ] as const) {
+    await assert.rejects(
+      () => inbox.read(id),
+      (error: unknown) => {
+        assert.match(recipeImportErrorMessage(error), expected);
+        return true;
+      },
+    );
+  }
+  const secret = 'private contents must never appear';
+  assert.equal(
+    recipeImportErrorMessage(new Error(secret)).includes(secret),
+    false,
+  );
+});
 
 test('Teildokument zeigt die Empfangsanleitung zuerst und bleibt im bisherigen Dateiformat lesbar', async () => {
   const recipe = createSampleRecipes()[0];

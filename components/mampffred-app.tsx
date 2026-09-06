@@ -134,6 +134,7 @@ import {
   recipeShareMessage,
   recipeReceiveInstructions,
   sharedRecipeInbox,
+  recipeImportErrorMessage,
   createSharedRecipeUrl,
   MAX_SHARED_RECIPE_FILE_BYTES,
   parseSharedRecipe,
@@ -5181,6 +5182,65 @@ function RecipeLinkDialog({
   );
 }
 
+function RecipeImportErrorDialog({
+  message,
+  onClose,
+  onFile,
+}: {
+  message: string;
+  onClose: () => void;
+  onFile: (file: File) => Promise<void>;
+}) {
+  const dialogRef = useModalFocus<HTMLElement>(onClose);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="modal-backdrop">
+      <section
+        ref={dialogRef}
+        className="confirm-dialog shared-recipe-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="recipe-import-error-title"
+        aria-describedby="recipe-import-error-message"
+      >
+        <h2 id="recipe-import-error-title">
+          Rezept konnte nicht geöffnet werden
+        </h2>
+        <p id="recipe-import-error-message" role="status">
+          {message}
+        </p>
+        <input
+          ref={inputRef}
+          hidden
+          type="file"
+          accept=".mampffred-rezept,.json,.txt,application/json,text/plain"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (!file || busy) return;
+            setBusy(true);
+            void onFile(file).finally(() => setBusy(false));
+          }}
+        />
+        <div className="dialog-actions">
+          <button type="button" disabled={busy} onClick={onClose}>
+            Schließen
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            disabled={busy}
+            onClick={() => inputRef.current?.click()}
+          >
+            {busy ? 'Datei wird geprüft …' : 'Rezeptdatei auswählen'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function SharedRecipeDialog({
   recipe,
   image,
@@ -5763,6 +5823,7 @@ export default function MampffredApp() {
   const [toast, setToast] = useState<ToastState>();
   const [sharedRecipePreview, setSharedRecipePreview] =
     useState<SharedRecipeImport>();
+  const [recipeImportError, setRecipeImportError] = useState<string>();
   const [exportBusy, setExportBusy] = useState(false);
   const [sharedRecipeImportBusy, setSharedRecipeImportBusy] = useState(false);
   const [shareCopyText, setShareCopyText] = useState<string>();
@@ -5979,10 +6040,11 @@ export default function MampffredApp() {
       .then((preview) => {
         if (!cancelled) {
           setToast(undefined);
+          setRecipeImportError(undefined);
           setSharedRecipePreview(preview);
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (cancelled) return;
         void sharedRecipeInbox(recipeShareBaseUrl())
           .remove(id)
@@ -5991,13 +6053,8 @@ export default function MampffredApp() {
         const url = new URL(window.location.href);
         url.searchParams.delete('incoming');
         window.history.replaceState(window.history.state, '', url);
-        setToast({
-          message:
-            'Das geteilte Rezept konnte nicht geöffnet werden. Bitte teile genau eine Mampffred-Rezeptdatei erneut.',
-          tone: 'error',
-        });
-        if (toastTimer.current) window.clearTimeout(toastTimer.current);
-        toastTimer.current = window.setTimeout(() => setToast(undefined), 4200);
+        setToast(undefined);
+        setRecipeImportError(recipeImportErrorMessage(error));
       });
     return () => {
       cancelled = true;
@@ -6016,7 +6073,7 @@ export default function MampffredApp() {
       if (
         !message ||
         typeof message.id !== 'string' ||
-        !/^[a-f0-9-]{36}$/u.test(message.id)
+        !/^(?:[a-f0-9-]{36}|error(?:-[A-Z_]{1,32})?)$/u.test(message.id)
       )
         return;
       if (
@@ -6028,13 +6085,17 @@ export default function MampffredApp() {
         return;
       }
       if (writerState !== 'ready' || message.type !== 'open' || reading) return;
-      if (incomingRecipeId.current === message.id && sharedRecipePreview) {
+      if (
+        incomingRecipeId.current === message.id &&
+        (sharedRecipePreview || recipeImportError)
+      ) {
         channel.postMessage({ type: 'opened', id: message.id });
         return;
       }
       // Preserve an active editor or another modal; the receiving window retries.
       if (
         sharedRecipePreview ||
+        recipeImportError ||
         editorRecipeId ||
         planner ||
         settings ||
@@ -6057,7 +6118,18 @@ export default function MampffredApp() {
           setSharedRecipePreview(preview);
           channel.postMessage({ type: 'opened', id: message.id });
         })
-        .catch(() => undefined)
+        .catch((error: unknown) => {
+          if (stopped) return;
+          incomingRecipeId.current = message.id;
+          setToast(undefined);
+          setRecipeImportError(recipeImportErrorMessage(error));
+          channel.postMessage({ type: 'opened', id: message.id });
+          // Keep the handoff address until the dialog is dismissed, so the
+          // receiving window can focus this instance even for failed imports.
+          const url = new URL(window.location.href);
+          url.searchParams.set('incoming', message.id);
+          window.history.replaceState(window.history.state, '', url);
+        })
         .finally(() => {
           reading = false;
         });
@@ -6081,6 +6153,7 @@ export default function MampffredApp() {
     writerState,
     incomingForwarded,
     sharedRecipePreview,
+    recipeImportError,
     editorRecipeId,
     planner,
     settings,
@@ -6776,19 +6849,14 @@ export default function MampffredApp() {
     return true;
   }
   async function importRecipeFile(file: File) {
-    if (file.size > MAX_SHARED_RECIPE_FILE_BYTES) {
-      showToast('Die Rezeptdatei ist zu groß.', 4200);
-      return;
-    }
     try {
+      if (file.size > MAX_SHARED_RECIPE_FILE_BYTES)
+        throw new Error('SHARED_RECIPE_TOO_LARGE');
       const imported = await parseSharedRecipeFile(await file.text());
+      setRecipeImportError(undefined);
       setSharedRecipePreview(imported);
-    } catch {
-      showToast(
-        'Das Rezept konnte nicht importiert oder gespeichert werden. Bitte prüfe Datei und Speicherhinweis.',
-        4200,
-        'error',
-      );
+    } catch (error) {
+      setRecipeImportError(recipeImportErrorMessage(error));
     }
   }
   async function confirmSharedRecipeImport() {
@@ -6814,6 +6882,7 @@ export default function MampffredApp() {
   }
   function dismissSharedRecipe() {
     setSharedRecipePreview(undefined);
+    setRecipeImportError(undefined);
     const id = incomingRecipeId.current;
     incomingRecipeId.current = undefined;
     if (!id) return;
@@ -7240,12 +7309,12 @@ export default function MampffredApp() {
         <ShieldCheck size={42} />
         <h1>
           {incomingForwarded
-            ? 'Dein Rezept ist bereit.'
+            ? 'Deine Nachricht ist angekommen.'
             : 'Mampffred ist bereits geöffnet.'}
         </h1>
         <p>
           {incomingForwarded
-            ? 'Die Rezeptvorschau wartet in deiner bereits geöffneten Mampffred-App.'
+            ? 'Das Ergebnis der Rezeptprüfung findest du in deiner bereits geöffneten Mampffred-App.'
             : 'Schließe die App in anderen Browserfenstern oder als installierte App. So können Änderungen nicht gegenseitig überschrieben werden.'}
         </p>
         <button
@@ -7423,6 +7492,7 @@ export default function MampffredApp() {
                 backupRequest ||
                 weekShoppingRequest ||
                 sharedRecipePreview ||
+                recipeImportError ||
                 shareCopyText ||
                 shareFallback,
               ) || undefined
@@ -7437,6 +7507,7 @@ export default function MampffredApp() {
                 backupRequest ||
                 weekShoppingRequest ||
                 sharedRecipePreview ||
+                recipeImportError ||
                 shareCopyText ||
                 shareFallback,
               ) || undefined
@@ -7736,6 +7807,13 @@ export default function MampffredApp() {
               busy={sharedRecipeImportBusy}
               onCancel={dismissSharedRecipe}
               onConfirm={() => void confirmSharedRecipeImport()}
+            />
+          )}
+          {recipeImportError && (
+            <RecipeImportErrorDialog
+              message={recipeImportError}
+              onClose={dismissSharedRecipe}
+              onFile={importRecipeFile}
             />
           )}
           {shareFallback && (
