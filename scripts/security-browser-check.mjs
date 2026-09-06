@@ -206,7 +206,7 @@ try {
       imageKey: 'private-key-never-exported',
       imageFrame: { x: 0.2, y: 0.7, zoom: 1.5 },
     };
-    const exported = await sharing.createSharedRecipeFile(recipe, photo);
+    const exported = await sharing.createSharedRecipeTransferFile(recipe, photo);
     const contents = await exported.text();
     const parsed = await sharing.parseSharedRecipeFile(contents);
     if (
@@ -335,6 +335,7 @@ try {
     .click();
   await app.getByRole('button', { name: 'Rezept teilen', exact: true }).click();
   const shared = await app.evaluate(() => window.__lastShare);
+  assert.match(shared.text, /gedrückt halten → ⋮ → Teilen → Mampffred/);
   assert.equal(
     shared.active,
     true,

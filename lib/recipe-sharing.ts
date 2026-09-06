@@ -12,6 +12,13 @@ export const MAX_SHARED_RECIPE_BYTES = 500_000;
 export const MAX_SHARED_RECIPE_FILE_BYTES = 2_000_000;
 export const MAX_SHARED_IMAGE_BYTES = 1_000_000;
 export type SharedRecipeImport = { recipe: Recipe; image?: Blob };
+export const recipeReceiveInstructions = {
+  Android:
+    'In WhatsApp die Datei gedrückt halten → ⋮ → Teilen → Mampffred. Danach „Rezept hinzufügen“ wählen.',
+  iPhone:
+    'In Mampffred unter „Rezepte“ auf „Rezeptdatei importieren“ tippen und diese Datei auswählen.',
+};
+export const recipeShareMessage = `Rezept für Mampffred – ein vorhandenes Foto ist enthalten.\n\nAndroid: ${recipeReceiveInstructions.Android}\n\niPhone: ${recipeReceiveInstructions.iPhone}`;
 // Die komprimierte Größe hängt vom Inhalt ab. Umfangreiche Rezepte können das
 // Linkbudget überschreiten und müssen dann als Datei übertragen werden.
 export const MAX_SHARED_RECIPE_LINK_CHARS = 8_000;
@@ -98,7 +105,26 @@ export async function createSharedRecipeTransferFile(
   image?: Blob,
 ) {
   const file = await createSharedRecipeFile(recipe, image);
-  return new File([file], `${file.name}.txt`, { type: 'text/plain' });
+  const envelope = JSON.parse(await file.text());
+  const contents = JSON.stringify(
+    {
+      'Rezept in Mampffred übernehmen': recipeReceiveInstructions,
+      ...envelope,
+    },
+    null,
+    2,
+  );
+  const transfer = new File([contents], `${file.name}.txt`, {
+    type: 'text/plain',
+  });
+  const { image: _, ...text } = JSON.parse(contents);
+  if (
+    transfer.size > MAX_SHARED_RECIPE_FILE_BYTES ||
+    new TextEncoder().encode(JSON.stringify(text)).byteLength >
+      MAX_SHARED_RECIPE_BYTES
+  )
+    throw new Error('SHARED_RECIPE_TOO_LARGE');
+  return transfer;
 }
 
 export function sharedRecipeInbox(baseUrl: string) {

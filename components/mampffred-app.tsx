@@ -131,6 +131,8 @@ import {
 import {
   createSharedRecipeFile,
   createSharedRecipeTransferFile,
+  recipeShareMessage,
+  recipeReceiveInstructions,
   sharedRecipeInbox,
   createSharedRecipeUrl,
   MAX_SHARED_RECIPE_FILE_BYTES,
@@ -1532,6 +1534,15 @@ function RecipesView({
           }}
         />
       </div>
+      <details className="recipe-receive-help">
+        <summary>Rezept aus WhatsApp übernehmen</summary>
+        <p>
+          <strong>Android:</strong> {recipeReceiveInstructions.Android}
+        </p>
+        <p>
+          <strong>iPhone:</strong> {recipeReceiveInstructions.iPhone}
+        </p>
+      </details>
       <span className="sr-only" role="status" aria-live="polite">
         {recipes.length}{' '}
         {recipes.length === 1
@@ -6625,7 +6636,11 @@ export default function MampffredApp() {
       }
       setNativeShareBusy(true);
       // No await before share: preserve the activation from the user's click.
-      await navigator.share({ files: [file], title: recipe.name });
+      await navigator.share({
+        files: [file],
+        title: recipe.name,
+        text: recipeShareMessage,
+      });
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError'))
         setShareFallback(recipe);

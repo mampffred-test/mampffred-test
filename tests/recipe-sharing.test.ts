@@ -4,6 +4,7 @@ import test from 'node:test';
 import { createSampleRecipes } from '../lib/model.ts';
 import {
   createSharedRecipeFile,
+  createSharedRecipeTransferFile,
   createSharedRecipeUrl,
   formatSharedRecipeText,
   MAX_SHARED_RECIPE_LINK_CHARS,
@@ -15,6 +16,25 @@ import {
   serializeSharedRecipe,
   sharedRecipeFileName,
 } from '../lib/recipe-sharing.ts';
+
+test('Teildokument zeigt die Empfangsanleitung zuerst und bleibt im bisherigen Dateiformat lesbar', async () => {
+  const recipe = createSampleRecipes()[0];
+  const file = await createSharedRecipeTransferFile(recipe);
+  const contents = await file.text();
+  const envelope = JSON.parse(contents);
+  assert.equal(Object.keys(envelope)[0], 'Rezept in Mampffred übernehmen');
+  assert.match(
+    envelope['Rezept in Mampffred übernehmen'].Android,
+    /gedrückt halten/,
+  );
+  assert.equal(envelope.format, 'mampffred-recipe');
+  assert.equal(envelope.version, 2);
+  assert.equal(
+    (await parseSharedRecipeFile(contents)).recipe.name,
+    recipe.name,
+  );
+  assert.equal(file.type, 'text/plain');
+});
 
 test('erstellt einen lesbaren Text als Android-Fallback', () => {
   const recipe = createSampleRecipes()[0];
