@@ -14,7 +14,9 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = process.cwd();
 let emergency = false;
+const postedToServer = [];
 const server = createServer(async (request, response) => {
+  if (request.method === 'POST') postedToServer.push(request.url);
   try {
     const pathname = new URL(request.url, 'http://localhost').pathname;
     if (emergency && (pathname === '/sw.js' || pathname === '/recovery.html')) {
@@ -295,6 +297,13 @@ try {
     window.__shareMode = 'success';
     window.__clipboardBlocked = false;
     window.__clipboardWrites = [];
+    Object.defineProperty(navigator, 'canShare', {
+      configurable: true,
+      value: (data) =>
+        data.files?.every(
+          (file) => file.type === 'text/plain' && file.name.endsWith('.txt'),
+        ),
+    });
     Object.defineProperty(navigator, 'share', {
       configurable: true,
       value: async (data) => {
@@ -331,7 +340,14 @@ try {
     true,
     'native share must be called within click activation',
   );
-  assert.match(shared.url, /#recipe=gzip\./);
+  const transfer = await app.evaluate(async () => ({
+    name: window.__lastShare.files[0].name,
+    type: window.__lastShare.files[0].type,
+    data: JSON.parse(await window.__lastShare.files[0].text()),
+  }));
+  assert.match(transfer.name, /\.mampffred-rezept\.txt$/);
+  assert.equal(transfer.type, 'text/plain');
+  assert.equal(transfer.data.recipe.name, 'Haferporridge mit Beeren');
   await app.evaluate(() => {
     window.__shareMode = 'AbortError';
   });
@@ -342,11 +358,16 @@ try {
     window.__clipboardBlocked = true;
   });
   await app.getByRole('button', { name: 'Rezept teilen', exact: true }).click();
+  await app
+    .getByRole('dialog', { name: 'Rezept teilen', exact: true })
+    .getByRole('button', { name: 'Rezeptlink teilen', exact: true })
+    .click();
   const copyDialog = app.getByRole('dialog', {
     name: 'Rezeptlink kopieren',
     exact: true,
   });
   await copyDialog.waitFor();
+  shared.url = await app.evaluate(() => window.__lastShare.url);
   assert.match(
     await copyDialog
       .getByRole('textbox', { name: 'Rezeptlink', exact: true })
@@ -570,6 +591,15 @@ try {
   assert.equal(photoExport.version, 2);
   assert.equal(photoExport.image.type, 'image/jpeg');
   assert.deepEqual(photoExport.image.frame, framed.imageFrame);
+  await app.evaluate(() => {
+    window.__shareMode = 'success';
+  });
+  await app.getByRole('button', { name: 'Rezept teilen', exact: true }).click();
+  const sentPhoto = await app.evaluate(async () =>
+    JSON.parse(await window.__lastShare.files[0].text()),
+  );
+  assert.deepEqual(sentPhoto.image.frame, framed.imageFrame);
+  assert.equal(sentPhoto.image.type, 'image/jpeg');
   await app
     .getByRole('button', { name: 'Rezept bearbeiten', exact: true })
     .click();
@@ -597,6 +627,102 @@ try {
   assert.equal(errors.length, 0, errors.join('\n'));
   console.log(
     'PASS: image preview/cancel, image upgrade, persistent nondestructive framing, unit picker and keyboard escape, image download and crop cancellation',
+  );
+  // Simulate the OS multipart navigation through the real installed worker.
+  // The app CSP blocks fetch, so this deliberately uses the share-target form path.
+  const receiveFile = async (contents, target = app) => {
+    await target.evaluate((text) => {
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = '/receive-share';
+      form.enctype = 'multipart/form-data';
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.name = 'recipe';
+      const transfer = new DataTransfer();
+      transfer.items.add(
+        new File([text], 'rezept.mampffred-rezept.txt', { type: 'text/plain' }),
+      );
+      input.files = transfer.files;
+      form.append(input);
+      document.body.append(form);
+      form.submit();
+    }, contents);
+    await target.waitForURL(/\?incoming=/);
+  };
+  await context.setOffline(true);
+  await receiveFile(photoFixture.contents);
+  const receivedDialog = app
+    .getByRole('dialog')
+    .filter({ hasText: 'Mit dir über Mampffred geteilt' });
+  await receivedDialog.waitFor();
+  await receivedDialog.locator('.framed-image img').waitFor();
+  await app.reload();
+  await receivedDialog.waitFor();
+  await receivedDialog
+    .getByRole('button', { name: 'Rezept hinzufügen', exact: true })
+    .click();
+  await receivedDialog.waitFor({ state: 'hidden' });
+  assert.equal(new URL(app.url()).searchParams.has('incoming'), false);
+  const inboxCount = () =>
+    app.evaluate(
+      async () =>
+        (await (await caches.open('mampffred-%2F-inbox')).keys()).length,
+    );
+  await app.waitForFunction(
+    async () =>
+      (await (await caches.open('mampffred-%2F-inbox')).keys()).length === 0,
+  );
+  await receiveFile(photoFixture.contents);
+  await receivedDialog.waitFor();
+  await receivedDialog
+    .getByRole('button', { name: 'Abbrechen', exact: true })
+    .click();
+  await app.waitForFunction(
+    async () =>
+      (await (await caches.open('mampffred-%2F-inbox')).keys()).length === 0,
+  );
+  await receiveFile('not a recipe');
+  await app
+    .getByText(/Das geteilte Rezept konnte nicht geöffnet werden/)
+    .waitFor();
+  await app.waitForFunction(
+    async () =>
+      (await (await caches.open('mampffred-%2F-inbox')).keys()).length === 0,
+  );
+  assert.equal(await inboxCount(), 0);
+  const otherWindow = await context.newPage();
+  await otherWindow.goto(origin);
+  await otherWindow
+    .getByRole('heading', { name: 'Mampffred ist bereits geöffnet.' })
+    .waitFor();
+  await receiveFile(photoFixture.contents, otherWindow);
+  await receivedDialog.waitFor();
+  await otherWindow
+    .getByRole('heading', { name: 'Dein Rezept ist bereit.' })
+    .waitFor();
+  await otherWindow.getByRole('button', { name: 'Zur geöffneten App' }).click();
+  await receivedDialog
+    .getByRole('button', { name: 'Abbrechen', exact: true })
+    .click();
+  await otherWindow.close();
+  await app.waitForFunction(
+    async () =>
+      (await (await caches.open('mampffred-%2F-inbox')).keys()).length === 0,
+  );
+  assert.deepEqual(
+    postedToServer,
+    [],
+    'incoming contents must never reach the server',
+  );
+  await context.setOffline(false);
+  await app.goto(origin);
+  await app
+    .getByRole('navigation', { name: 'Hauptnavigation' })
+    .getByRole('button', { name: 'Rezepte', exact: true })
+    .click();
+  console.log(
+    'PASS: offline share-target POST, photo preview, reload recovery, confirm/cancel cleanup, existing-window handoff, invalid file rejection and zero server POSTs',
   );
   await app
     .getByRole('button', { name: 'Rezept hinzufügen', exact: true })

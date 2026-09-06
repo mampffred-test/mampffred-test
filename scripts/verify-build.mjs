@@ -25,15 +25,20 @@ for (const path of appShell) {
 const manifest = JSON.parse(
   await readFile(join(outputDirectory, 'manifest.webmanifest'), 'utf8'),
 );
+if (
+  manifest.share_target?.action !== './receive-share' ||
+  manifest.share_target?.method !== 'POST' ||
+  manifest.share_target?.enctype !== 'multipart/form-data' ||
+  manifest.share_target?.params?.files?.[0]?.name !== 'recipe'
+)
+  throw new Error('Lokaler Rezeptempfang ist nicht korrekt registriert.');
 for (const icon of manifest.icons ?? []) {
   await access(join(outputDirectory, icon.src));
 }
 
 const builtScripts = (
   await Promise.all(
-    (
-      await readdir(join(outputDirectory, 'assets'))
-    )
+    (await readdir(join(outputDirectory, 'assets')))
       .filter((file) => file.endsWith('.js'))
       .map((file) => readFile(join(outputDirectory, 'assets', file), 'utf8')),
   )

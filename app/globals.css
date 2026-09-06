@@ -5366,3 +5366,7 @@ select:focus-visible {
   margin-top: 10px;
   text-decoration: underline;
 }
+.share-fallback-actions {
+  display: grid;
+  gap: 10px;
+}

@@ -2,6 +2,20 @@
 // Keep the exact existing worker URL and scope when deploying this file.
 const emergencyScope = new URL(self.registration.scope);
 const emergencyPrefix = `mampffred-${encodeURIComponent(emergencyScope.pathname)}-`;
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (
+    url.origin === emergencyScope.origin &&
+    url.pathname === `${emergencyScope.pathname}receive-share`
+  )
+    event.respondWith(
+      Promise.resolve(
+        new Response('Mampffred wird gewartet. Bitte später erneut teilen.', {
+          status: 503,
+        }),
+      ),
+    );
+});
 self.addEventListener('install', (event) =>
   event.waitUntil(self.skipWaiting()),
 );

@@ -90,6 +90,47 @@ export async function createSharedRecipeFile(recipe: Recipe, image?: Blob) {
   });
 }
 
+// A text document is accepted by native browser sharing; custom extensions and
+// application/json are not supported consistently. The validated content stays
+// identical to the recipe file, including its embedded photo.
+export async function createSharedRecipeTransferFile(
+  recipe: Recipe,
+  image?: Blob,
+) {
+  const file = await createSharedRecipeFile(recipe, image);
+  return new File([file], `${file.name}.txt`, { type: 'text/plain' });
+}
+
+export function sharedRecipeInbox(baseUrl: string) {
+  const base = new URL(baseUrl);
+  const name = `mampffred-${encodeURIComponent(base.pathname)}-inbox`;
+  const key = (id: string) => {
+    if (!/^[a-f0-9-]{36}$/u.test(id))
+      throw new Error('INVALID_INCOMING_RECIPE');
+    return new URL(`__share_inbox__/${id}`, base).href;
+  };
+  return {
+    async read(id: string) {
+      const url = key(id);
+      const cache = await caches.open(name);
+      const response = await cache.match(url);
+      if (
+        !response ||
+        Date.now() - Number(response.headers.get('X-Received-At')) > 86_400_000
+      )
+        throw new Error('EXPIRED_INCOMING_RECIPE');
+      const blob = await response.blob();
+      if (blob.size > MAX_SHARED_RECIPE_FILE_BYTES)
+        throw new Error('SHARED_RECIPE_TOO_LARGE');
+      return parseSharedRecipeFile(await blob.text());
+    },
+    async remove(id: string) {
+      const url = key(id);
+      await (await caches.open(name)).delete(url);
+    },
+  };
+}
+
 export async function parseSharedRecipeFile(
   contents: string,
 ): Promise<SharedRecipeImport> {

@@ -130,6 +130,8 @@ import {
 } from '@/lib/recipe-filter';
 import {
   createSharedRecipeFile,
+  createSharedRecipeTransferFile,
+  sharedRecipeInbox,
   createSharedRecipeUrl,
   MAX_SHARED_RECIPE_FILE_BYTES,
   parseSharedRecipe,
@@ -1522,7 +1524,7 @@ function RecipesView({
           ref={importFileRef}
           hidden
           type="file"
-          accept=".mampffred-rezept,.mampffred-rezept.json,application/json"
+          accept=".mampffred-rezept,.json,.txt,application/json,text/plain"
           onChange={(event) => {
             const file = event.target.files?.[0];
             if (file) onImport(file);
@@ -5066,6 +5068,47 @@ function DeleteRecipeDialog({
   );
 }
 
+function RecipeShareFallback({
+  recipe,
+  onClose,
+  onDownload,
+  onLink,
+}: {
+  recipe: Recipe;
+  onClose: () => void;
+  onDownload: () => void;
+  onLink: () => void;
+}) {
+  const dialogRef = useModalFocus<HTMLElement>(onClose);
+  return (
+    <div className="modal-backdrop">
+      <section
+        ref={dialogRef}
+        className="confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="share-fallback-title"
+      >
+        <h2 id="share-fallback-title">Rezept teilen</h2>
+        <p>
+          Die direkte Dateiübergabe ist hier gerade nicht möglich. Du kannst das
+          vollständige Rezept speichern oder einen Link teilen
+          {recipe.imageKey ? ' – ohne eigenes Foto' : ''}.
+        </p>
+        <div className="share-fallback-actions">
+          <button className="primary-button" onClick={onDownload}>
+            Rezeptdatei speichern
+          </button>
+          <button onClick={onLink}>
+            {recipe.imageKey ? 'Link ohne Foto teilen' : 'Rezeptlink teilen'}
+          </button>
+          <button onClick={onClose}>Abbrechen</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function RecipeLinkDialog({
   text,
   onClose,
@@ -5712,6 +5755,10 @@ export default function MampffredApp() {
   const [exportBusy, setExportBusy] = useState(false);
   const [sharedRecipeImportBusy, setSharedRecipeImportBusy] = useState(false);
   const [shareCopyText, setShareCopyText] = useState<string>();
+  const [shareFallback, setShareFallback] = useState<Recipe>();
+  const [nativeShareBusy, setNativeShareBusy] = useState(false);
+  const incomingRecipeId = useRef<string | undefined>(undefined);
+  const [incomingForwarded, setIncomingForwarded] = useState(false);
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   const appFrameRef = useRef<HTMLDivElement>(null);
   const tabScrollPositions = useRef<Partial<Record<Tab, number>>>({});
@@ -5775,6 +5822,31 @@ export default function MampffredApp() {
     url?: string;
     error?: string;
   }>();
+  const [preparedShareFile, setPreparedShareFile] = useState<{
+    recipe: Recipe;
+    file?: File;
+  }>();
+  useEffect(() => {
+    setPreparedShareFile(undefined);
+    if (!selectedRecipe) return;
+    let cancelled = false;
+    void (async () => {
+      const image = selectedRecipe.imageKey
+        ? (pendingImages.current[selectedRecipe.imageKey] ??
+          (await loadRecipeImage(selectedRecipe.imageKey)))
+        : undefined;
+      return createSharedRecipeTransferFile(selectedRecipe, image);
+    })()
+      .then((file) => {
+        if (!cancelled) setPreparedShareFile({ recipe: selectedRecipe, file });
+      })
+      .catch(() => {
+        if (!cancelled) setPreparedShareFile({ recipe: selectedRecipe });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRecipe]);
   useEffect(() => {
     setPreparedShareLink(undefined);
     if (!selectedRecipe) return;
@@ -5884,6 +5956,128 @@ export default function MampffredApp() {
       cancelled = true;
     };
   }, [loadAttempt]);
+  useEffect(() => {
+    if (loadState !== 'ready') return;
+    let cancelled = false;
+    const id = new URL(window.location.href).searchParams.get('incoming');
+    if (writerState !== 'ready') return;
+    if (!id) return;
+    incomingRecipeId.current = id;
+    void sharedRecipeInbox(recipeShareBaseUrl())
+      .read(id)
+      .then((preview) => {
+        if (!cancelled) {
+          setToast(undefined);
+          setSharedRecipePreview(preview);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        void sharedRecipeInbox(recipeShareBaseUrl())
+          .remove(id)
+          .catch(() => undefined);
+        incomingRecipeId.current = undefined;
+        const url = new URL(window.location.href);
+        url.searchParams.delete('incoming');
+        window.history.replaceState(window.history.state, '', url);
+        setToast({
+          message:
+            'Das geteilte Rezept konnte nicht geöffnet werden. Bitte teile genau eine Mampffred-Rezeptdatei erneut.',
+          tone: 'error',
+        });
+        if (toastTimer.current) window.clearTimeout(toastTimer.current);
+        toastTimer.current = window.setTimeout(() => setToast(undefined), 4200);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadState, writerState]);
+  useEffect(() => {
+    if (loadState !== 'ready' || !('BroadcastChannel' in window)) return;
+    const channel = new BroadcastChannel(
+      `mampffred-incoming-${import.meta.env.BASE_URL}`,
+    );
+    let stopped = false;
+    let reading = false;
+    const id = new URL(window.location.href).searchParams.get('incoming');
+    channel.onmessage = (event: MessageEvent) => {
+      const message = event.data;
+      if (
+        !message ||
+        typeof message.id !== 'string' ||
+        !/^[a-f0-9-]{36}$/u.test(message.id)
+      )
+        return;
+      if (
+        writerState === 'blocked' &&
+        message.type === 'opened' &&
+        message.id === id
+      ) {
+        setIncomingForwarded(true);
+        return;
+      }
+      if (writerState !== 'ready' || message.type !== 'open' || reading) return;
+      if (incomingRecipeId.current === message.id && sharedRecipePreview) {
+        channel.postMessage({ type: 'opened', id: message.id });
+        return;
+      }
+      // Preserve an active editor or another modal; the receiving window retries.
+      if (
+        sharedRecipePreview ||
+        editorRecipeId ||
+        planner ||
+        settings ||
+        backupRequest ||
+        deleteRequest ||
+        shareFallback ||
+        storageFailure
+      )
+        return;
+      reading = true;
+      void sharedRecipeInbox(recipeShareBaseUrl())
+        .read(message.id)
+        .then((preview) => {
+          if (stopped) return;
+          incomingRecipeId.current = message.id;
+          const url = new URL(window.location.href);
+          url.searchParams.set('incoming', message.id);
+          window.history.replaceState(window.history.state, '', url);
+          setToast(undefined);
+          setSharedRecipePreview(preview);
+          channel.postMessage({ type: 'opened', id: message.id });
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          reading = false;
+        });
+    };
+    const request = () => {
+      if (writerState === 'blocked' && id && !incomingForwarded)
+        channel.postMessage({ type: 'open', id });
+    };
+    request();
+    const timer =
+      writerState === 'blocked' && id && !incomingForwarded
+        ? window.setInterval(request, 1000)
+        : undefined;
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      channel.close();
+    };
+  }, [
+    loadState,
+    writerState,
+    incomingForwarded,
+    sharedRecipePreview,
+    editorRecipeId,
+    planner,
+    settings,
+    backupRequest,
+    deleteRequest,
+    shareFallback,
+    storageFailure,
+  ]);
   useEffect(() => {
     if (loadState !== 'ready') return;
     let cancelled = false;
@@ -6418,6 +6612,28 @@ export default function MampffredApp() {
     showToast('Einkaufsartikel wiederhergestellt.');
   }
   async function shareRecipe(recipe: Recipe) {
+    if (nativeShareBusy || preparedShareFile?.recipe !== recipe) return;
+    const file = preparedShareFile.file;
+    try {
+      if (
+        !file ||
+        !navigator.share ||
+        !navigator.canShare?.({ files: [file] })
+      ) {
+        setShareFallback(recipe);
+        return;
+      }
+      setNativeShareBusy(true);
+      // No await before share: preserve the activation from the user's click.
+      await navigator.share({ files: [file], title: recipe.name });
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError'))
+        setShareFallback(recipe);
+    } finally {
+      setNativeShareBusy(false);
+    }
+  }
+  async function shareRecipeLink(recipe: Recipe) {
     const text = `„${recipe.name}“ als Mampffred-Rezept öffnen und direkt zur eigenen Sammlung hinzufügen.`;
     // Der Link wird beim Öffnen des Rezepts vorbereitet: WebKit verliert die
     // transiente Aktivierung durch jedes await, deshalb muss share() ohne
@@ -6570,7 +6786,7 @@ export default function MampffredApp() {
           sharedRecipePreview.image,
         )
       )
-        setSharedRecipePreview(undefined);
+        dismissSharedRecipe();
     } catch {
       showToast(
         'Das geteilte Rezept konnte nicht gespeichert werden.',
@@ -6580,6 +6796,18 @@ export default function MampffredApp() {
     } finally {
       setSharedRecipeImportBusy(false);
     }
+  }
+  function dismissSharedRecipe() {
+    setSharedRecipePreview(undefined);
+    const id = incomingRecipeId.current;
+    incomingRecipeId.current = undefined;
+    if (!id) return;
+    void sharedRecipeInbox(recipeShareBaseUrl())
+      .remove(id)
+      .catch(() => undefined);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('incoming');
+    window.history.replaceState(window.history.state, '', url);
   }
   function openPlanner(
     date = todayLocal(),
@@ -6995,16 +7223,28 @@ export default function MampffredApp() {
     return (
       <main className="recovery-screen">
         <ShieldCheck size={42} />
-        <h1>Mampffred ist bereits geöffnet.</h1>
+        <h1>
+          {incomingForwarded
+            ? 'Dein Rezept ist bereit.'
+            : 'Mampffred ist bereits geöffnet.'}
+        </h1>
         <p>
-          Schließe die App in anderen Browserfenstern oder als installierte App.
-          So können Änderungen nicht gegenseitig überschrieben werden.
+          {incomingForwarded
+            ? 'Die Rezeptvorschau wartet in deiner bereits geöffneten Mampffred-App.'
+            : 'Schließe die App in anderen Browserfenstern oder als installierte App. So können Änderungen nicht gegenseitig überschrieben werden.'}
         </p>
         <button
           className="primary-button"
-          onClick={() => window.location.reload()}
+          onClick={() => {
+            if (incomingForwarded)
+              navigator.serviceWorker.controller?.postMessage({
+                type: 'focus-incoming',
+                id: new URL(window.location.href).searchParams.get('incoming'),
+              });
+            else window.location.reload();
+          }}
         >
-          Erneut prüfen
+          {incomingForwarded ? 'Zur geöffneten App' : 'Erneut prüfen'}
         </button>
       </main>
     );
@@ -7168,7 +7408,8 @@ export default function MampffredApp() {
                 backupRequest ||
                 weekShoppingRequest ||
                 sharedRecipePreview ||
-                shareCopyText,
+                shareCopyText ||
+                shareFallback,
               ) || undefined
             }
             inert={
@@ -7181,7 +7422,8 @@ export default function MampffredApp() {
                 backupRequest ||
                 weekShoppingRequest ||
                 sharedRecipePreview ||
-                shareCopyText,
+                shareCopyText ||
+                shareFallback,
               ) || undefined
             }
           >
@@ -7347,14 +7589,19 @@ export default function MampffredApp() {
                 addRecipeToShopping(selectedRecipe, servings)
               }
               onShare={() => void shareRecipe(selectedRecipe)}
-              shareReady={preparedShareLink?.recipe === selectedRecipe}
+              shareReady={
+                preparedShareFile?.recipe === selectedRecipe &&
+                preparedShareLink?.recipe === selectedRecipe &&
+                !nativeShareBusy
+              }
               onExport={() => void exportRecipeFile(selectedRecipe)}
               exportBusy={exportBusy}
               inactive={Boolean(
                 editorRecipeId ||
                 planner ||
                 sharedRecipePreview ||
-                shareCopyText,
+                shareCopyText ||
+                shareFallback,
               )}
             />
           )}
@@ -7472,8 +7719,22 @@ export default function MampffredApp() {
               recipe={sharedRecipePreview.recipe}
               image={sharedRecipePreview.image}
               busy={sharedRecipeImportBusy}
-              onCancel={() => setSharedRecipePreview(undefined)}
+              onCancel={dismissSharedRecipe}
               onConfirm={() => void confirmSharedRecipeImport()}
+            />
+          )}
+          {shareFallback && (
+            <RecipeShareFallback
+              recipe={shareFallback}
+              onClose={() => setShareFallback(undefined)}
+              onDownload={() => {
+                void exportRecipeFile(shareFallback);
+                setShareFallback(undefined);
+              }}
+              onLink={() => {
+                void shareRecipeLink(shareFallback);
+                setShareFallback(undefined);
+              }}
             />
           )}
           {shareCopyText && (
