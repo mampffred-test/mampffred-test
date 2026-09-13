@@ -6,8 +6,8 @@ import { UnitPicker } from './unit-picker';
 import { RecipeStepsEditor } from './recipe-steps-editor';
 import { scaledIngredientAmount } from '@/lib/ingredient-amount';
 import {
-  CANNELLONI_IMAGE_KEY,
-  installStandardRecipe,
+  installStandardRecipes,
+  newStandardImageKeys,
 } from '@/lib/standard-recipes';
 
 /* oxlint-disable next/no-img-element, jsx-a11y/prefer-tag-over-role, react/immutability, react/refs, react/set-state-in-effect */
@@ -6445,43 +6445,38 @@ export default function MampffredApp() {
   }, [loadAttempt]);
   useEffect(() => {
     if (loadState !== 'ready' || writerState !== 'ready') return;
-    if (installStandardRecipe(dataRef.current) === dataRef.current) return;
+    if (installStandardRecipes(dataRef.current) === dataRef.current) return;
     let cancelled = false;
-    void import('@/lib/standard-recipe-image')
-      .then(({ cannelloniImage }) => {
-        if (cancelled) return;
-        const next = installStandardRecipe(dataRef.current);
-        if (next === dataRef.current) return;
-        const image =
-          next.recipes.length > dataRef.current.recipes.length
-            ? cannelloniImage()
-            : undefined;
-        return commitData(
-          next,
-          image ? { [CANNELLONI_IMAGE_KEY]: image } : {},
-        ).then(() => {
-          if (
-            !image ||
-            cancelled ||
-            !dataRef.current.recipes.some(
-              (recipe) => recipe.imageKey === CANNELLONI_IMAGE_KEY,
-            )
-          )
-            return;
-          setImageUrls((current) =>
-            current[CANNELLONI_IMAGE_KEY]
-              ? current
-              : {
-                  ...current,
-                  [CANNELLONI_IMAGE_KEY]: URL.createObjectURL(image),
-                },
+    void import('@/lib/standard-recipe-images')
+      .then(async ({ loadStandardRecipeImages }) => {
+        while (!cancelled) {
+          const snapshot = dataRef.current;
+          const next = installStandardRecipes(snapshot);
+          if (next === snapshot) return;
+          const images = await loadStandardRecipeImages(
+            newStandardImageKeys(snapshot, next),
           );
-        });
+          if (cancelled) return;
+          // Preserve edits or imports made while image chunks were loading.
+          if (dataRef.current !== snapshot) continue;
+          await commitData(next, images);
+          if (cancelled) return;
+          const referenced = referencedImageKeys(dataRef.current);
+          setImageUrls((current) => {
+            const urls = { ...current };
+            for (const [key, image] of Object.entries(images)) {
+              if (referenced.has(key) && !urls[key])
+                urls[key] = URL.createObjectURL(image);
+            }
+            return urls;
+          });
+          return;
+        }
       })
       .catch(() => {
         if (!cancelled)
           setMutationError(
-            'Das Standardrezept konnte nicht geladen werden. Bitte starte die App erneut.',
+            'Die Standardrezepte konnten nicht geladen werden. Bitte starte die App erneut.',
           );
       });
     return () => {

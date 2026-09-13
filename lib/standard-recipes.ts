@@ -1,4 +1,5 @@
 import type { AppData, Recipe } from './model.ts';
+import { additionalStandardRecipes } from './standard-recipe-catalog.ts';
 
 export const STANDARD_RECIPE_PACK = 'mampffred-cannelloni-v1';
 export const CANNELLONI_IMAGE_KEY = 'standard-cannelloni-image-v1';
@@ -98,4 +99,38 @@ export function installStandardRecipe(data: AppData): AppData {
     recipes: exists ? data.recipes : [...data.recipes, recipe],
     installedSamplePacks: [...data.installedSamplePacks, STANDARD_RECIPE_PACK],
   };
+}
+
+/** Each recipe has its own marker, including recipes found through prior imports. */
+export function installStandardRecipes(data: AppData): AppData {
+  let next = installStandardRecipe(data);
+  for (const { pack, recipe, aliases } of additionalStandardRecipes) {
+    if (next.installedSamplePacks.includes(pack)) continue;
+    if (next.installedSamplePacks.length >= 100) break;
+    const exists = next.recipes.some(
+      (entry) =>
+        entry.id === recipe.id ||
+        entry.shareId === recipe.shareId ||
+        aliases.includes(entry.shareId),
+    );
+    if (!exists && next.recipes.length >= 1_000) continue;
+    next = {
+      ...next,
+      recipes: exists
+        ? next.recipes
+        : [...next.recipes, structuredClone(recipe)],
+      installedSamplePacks: [...next.installedSamplePacks, pack],
+    };
+  }
+  return next;
+}
+
+export function newStandardImageKeys(
+  current: AppData,
+  next: AppData,
+): string[] {
+  const existing = new Set(current.recipes.map((recipe) => recipe.id));
+  return next.recipes.flatMap((recipe) =>
+    !existing.has(recipe.id) && recipe.imageKey ? [recipe.imageKey] : [],
+  );
 }
