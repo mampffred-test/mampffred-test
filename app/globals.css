@@ -6495,3 +6495,11 @@ select:focus-visible {
   background: #fff5ef;
   color: #994236;
 }
+.detail-delete-button {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 16px;
+  color: #a63428;
+  border: 1px solid #ddc1b8;
+  font-size: 0.85rem;
+}

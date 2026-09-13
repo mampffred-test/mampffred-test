@@ -4,6 +4,11 @@ import { MIN_BACKUP_PASSWORD_LENGTH } from '@/lib/backup';
 import { FramedImage, ImageFramingEditor } from './image-framing';
 import { UnitPicker } from './unit-picker';
 import { RecipeStepsEditor } from './recipe-steps-editor';
+import { scaledIngredientAmount } from '@/lib/ingredient-amount';
+import {
+  CANNELLONI_IMAGE_KEY,
+  installStandardRecipe,
+} from '@/lib/standard-recipes';
 
 /* oxlint-disable next/no-img-element, jsx-a11y/prefer-tag-over-role, react/immutability, react/refs, react/set-state-in-effect */
 
@@ -2131,6 +2136,7 @@ function RecipeDetail({
   imageUrls,
   onClose,
   onEdit,
+  onDelete,
   onPlan,
   onFavorite,
   onAddToShopping,
@@ -2146,6 +2152,7 @@ function RecipeDetail({
   imageUrls: Record<string, string>;
   onClose: () => void;
   onEdit: () => void;
+  onDelete: () => void;
   onPlan: (servings: number) => void;
   onFavorite: () => void;
   onAddToShopping: (servings: number) => void;
@@ -2218,6 +2225,9 @@ function RecipeDetail({
             <IconButton label="Rezept bearbeiten" onClick={onEdit}>
               <Pencil size={19} />
             </IconButton>
+            <IconButton label="Rezept löschen" onClick={onDelete}>
+              <Trash2 size={19} />
+            </IconButton>
           </div>
         </div>
         <RecipeImage
@@ -2285,9 +2295,7 @@ function RecipeDetail({
               {recipe.ingredients.map((ingredient, index) => (
                 <div key={`${ingredient.name}-${index}`}>
                   <strong>
-                    {Number.isFinite(Number(ingredient.amount))
-                      ? Math.round(Number(ingredient.amount) * factor * 10) / 10
-                      : ingredient.amount}
+                    {scaledIngredientAmount(ingredient.amount, factor)}
                   </strong>
                   <span>{ingredient.unit}</span>
                   <p>{ingredient.name}</p>
@@ -2341,6 +2349,12 @@ function RecipeDetail({
                 : 'Als Rezeptdatei sichern'}
             </button>
           </div>
+          <button
+            className="secondary-button danger-button detail-delete-button"
+            onClick={onDelete}
+          >
+            <Trash2 size={18} /> Rezept löschen
+          </button>
         </div>
       </div>
     </div>
@@ -6430,6 +6444,51 @@ export default function MampffredApp() {
     };
   }, [loadAttempt]);
   useEffect(() => {
+    if (loadState !== 'ready' || writerState !== 'ready') return;
+    if (installStandardRecipe(dataRef.current) === dataRef.current) return;
+    let cancelled = false;
+    void import('@/lib/standard-recipe-image')
+      .then(({ cannelloniImage }) => {
+        if (cancelled) return;
+        const next = installStandardRecipe(dataRef.current);
+        if (next === dataRef.current) return;
+        const image =
+          next.recipes.length > dataRef.current.recipes.length
+            ? cannelloniImage()
+            : undefined;
+        return commitData(
+          next,
+          image ? { [CANNELLONI_IMAGE_KEY]: image } : {},
+        ).then(() => {
+          if (
+            !image ||
+            cancelled ||
+            !dataRef.current.recipes.some(
+              (recipe) => recipe.imageKey === CANNELLONI_IMAGE_KEY,
+            )
+          )
+            return;
+          setImageUrls((current) =>
+            current[CANNELLONI_IMAGE_KEY]
+              ? current
+              : {
+                  ...current,
+                  [CANNELLONI_IMAGE_KEY]: URL.createObjectURL(image),
+                },
+          );
+        });
+      })
+      .catch(() => {
+        if (!cancelled)
+          setMutationError(
+            'Das Standardrezept konnte nicht geladen werden. Bitte starte die App erneut.',
+          );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadState, writerState]);
+  useEffect(() => {
     if (loadState !== 'ready') return;
     let cancelled = false;
     const id = new URL(window.location.href).searchParams.get('incoming');
@@ -7003,10 +7062,7 @@ export default function MampffredApp() {
       ),
     );
     const additions = recipe.ingredients.flatMap((ingredient) => {
-      const amount = Number(ingredient.amount);
-      const scaledAmount = Number.isFinite(amount)
-        ? String(Math.round(amount * factor * 10) / 10)
-        : ingredient.amount;
+      const scaledAmount = scaledIngredientAmount(ingredient.amount, factor);
       const name = [scaledAmount, ingredient.unit, ingredient.name]
         .filter(Boolean)
         .join(' ')
@@ -8069,6 +8125,7 @@ export default function MampffredApp() {
                 setRecipePlanWeekStart(undefined);
               }}
               onEdit={() => openExistingRecipeEditor(selectedRecipe.id)}
+              onDelete={() => setDeleteRequest(selectedRecipe)}
               onPlan={(servings) => openRecipePlanner(selectedRecipe, servings)}
               onFavorite={() =>
                 updateRecipe({
@@ -8089,6 +8146,7 @@ export default function MampffredApp() {
               exportBusy={exportBusy}
               inactive={Boolean(
                 editorRecipeId ||
+                deleteRequest ||
                 planner ||
                 sharedRecipePreview ||
                 shareCopyText ||
