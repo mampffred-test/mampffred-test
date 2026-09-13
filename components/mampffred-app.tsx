@@ -3,6 +3,7 @@ import { validateDataUpdate, referencedImageKeys } from '@/lib/data-updates';
 import { MIN_BACKUP_PASSWORD_LENGTH } from '@/lib/backup';
 import { FramedImage, ImageFramingEditor } from './image-framing';
 import { UnitPicker } from './unit-picker';
+import { RecipeStepsEditor } from './recipe-steps-editor';
 
 /* oxlint-disable next/no-img-element, jsx-a11y/prefer-tag-over-role, react/immutability, react/refs, react/set-state-in-effect */
 
@@ -22,7 +23,6 @@ import {
   Croissant,
   Download,
   EllipsisVertical,
-  GripVertical,
   Heart,
   Home,
   ImagePlus,
@@ -36,6 +36,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Save,
   Settings,
   Share2,
   ShieldCheck,
@@ -354,7 +355,11 @@ function useModalFocus<T extends HTMLElement>(
         dialog.querySelectorAll<HTMLElement>(
           'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
         ),
-      ).filter((element) => !element.hidden);
+      ).filter(
+        (element) =>
+          !element.closest('[hidden], [inert]') &&
+          element.getClientRects().length > 0,
+      );
     modalStack.push(dialog);
     const preferred = initialFocusSelector
       ? dialog.querySelector<HTMLElement>(initialFocusSelector)
@@ -640,14 +645,16 @@ function TodayView({
         title={greeting(now)}
         subtitle={localeDate.format(now)}
         leading={
-          <Image
-            className="header-mascot"
-            src={assetUrl('assets/mampffred-mascot-small.png')}
-            width={46}
-            height={52}
-            alt="Mampffred"
-            priority
-          />
+          meals.length > 0 ? (
+            <Image
+              className="header-mascot"
+              src={assetUrl('assets/mampffred-mascot-small.png')}
+              width={46}
+              height={52}
+              alt="Mampffred"
+              priority
+            />
+          ) : undefined
         }
         action={
           <IconButton label="Einstellungen öffnen" onClick={onSettings}>
@@ -1426,6 +1433,7 @@ function RecipesView({
   onFilter,
   onRecipe,
   onDraft,
+  onDiscardDraft,
   onAdd,
   onAddSamples,
   onToggleFavorite,
@@ -1439,11 +1447,13 @@ function RecipesView({
   onFilter: (filter: RecipeFilter) => void;
   onRecipe: (recipe: Recipe) => void;
   onDraft: (draft: RecipeDraft) => void;
+  onDiscardDraft: (draftId: string) => Promise<void>;
   onAdd: () => void;
   onAddSamples: () => void;
   onToggleFavorite: (recipe: Recipe) => void;
   onImport: (file: File) => void;
 }) {
+  const [discardTarget, setDiscardTarget] = useState<RecipeDraft>();
   const importFileRef = useRef<HTMLInputElement>(null);
   const filters: RecipeFilter[] = [
     'Alle',
@@ -1459,217 +1469,251 @@ function RecipesView({
     [data.recipes, deferredQuery, filter],
   );
   return (
-    <div className="screen-content recipes-view">
-      <header className="library-hero">
-        <div>
-          <h1>Rezepte</h1>
-          <p>Entdecke deine Lieblingsgerichte</p>
-        </div>
-        <span className="library-hero-leaves" aria-hidden="true">
-          <img src={assetUrl('assets/basil-header-leaves.png')} alt="" />
-        </span>
-      </header>
-      <IconButton
-        label="Rezept hinzufügen"
-        className="outlined recipes-floating-add"
-        onClick={onAdd}
+    <>
+      <div
+        className="screen-content recipes-view"
+        inert={Boolean(discardTarget) || undefined}
       >
-        <Plus size={25} />
-      </IconButton>
-      <label className="search-field">
-        <Search size={19} />
-        <input
-          aria-label="Rezepte suchen"
-          value={query}
-          onChange={(event) => onQuery(event.target.value)}
-          placeholder="Name, Zutat oder Tag suchen …"
-        />
-      </label>
-      <div className="filter-row" aria-label="Rezeptfilter">
-        {filters.map((item) => (
-          <button
-            key={item}
-            className={filter === item ? 'active' : ''}
-            aria-pressed={filter === item}
-            onClick={(event) => {
-              onFilter(item);
-              event.currentTarget.scrollIntoView({
-                behavior: window.matchMedia('(prefers-reduced-motion: reduce)')
-                  .matches
-                  ? 'auto'
-                  : 'smooth',
-                block: 'nearest',
-                inline: 'center',
-              });
-            }}
-          >
-            {item === 'Favoriten' && <Heart size={16} />}
-            {(item === 'Schnell' || item === 'Gesund') && (
-              <Sparkles size={16} />
-            )}
-            {(item === 'Vegetarisch' || item === 'Vegan') && <Leaf size={16} />}
-            {item}
-          </button>
-        ))}
-      </div>
-      <div className="recipe-library-actions">
-        <button type="button" onClick={() => importFileRef.current?.click()}>
-          <span>
-            <Upload size={21} />
-          </span>
-          <span>
-            <strong>Rezeptdatei importieren</strong>
-            <small>Mampffred Rezept Datei</small>
-          </span>
-          <ChevronRight size={19} />
-        </button>
-        <input
-          ref={importFileRef}
-          hidden
-          type="file"
-          accept=".mampffred-rezept,.json,.txt,application/json,text/plain"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) onImport(file);
-            event.currentTarget.value = '';
-          }}
-        />
-      </div>
-      <details className="recipe-receive-help">
-        <summary>Rezept aus WhatsApp übernehmen</summary>
-        <p>
-          <strong>Android:</strong> {recipeReceiveInstructions.Android}
-        </p>
-        <p>
-          <strong>iPhone:</strong> {recipeReceiveInstructions.iPhone}
-        </p>
-      </details>
-      <span className="sr-only" role="status" aria-live="polite">
-        {recipes.length}{' '}
-        {recipes.length === 1
-          ? 'Rezept wird angezeigt'
-          : 'Rezepte werden angezeigt'}
-      </span>
-      {!query && filter === 'Alle' && data.recipeDrafts.length > 0 && (
-        <section className="recipe-drafts" aria-labelledby="drafts-title">
+        <header className="library-hero">
           <div>
-            <h2 id="drafts-title">Entwürfe</h2>
-            <small>Automatisch lokal gespeichert</small>
+            <h1>Rezepte</h1>
+            <p>Entdecke deine Lieblingsgerichte</p>
           </div>
-          {data.recipeDrafts
-            .slice()
-            .sort((left, right) =>
-              right.updatedAt.localeCompare(left.updatedAt),
-            )
-            .map((draft) => (
-              <button
-                key={draft.id}
-                type="button"
-                onClick={() => onDraft(draft)}
-              >
-                <span>
-                  <strong>
-                    {draft.name.trim() ||
-                      draft.ingredients.find((ingredient) =>
-                        ingredient.name.trim(),
-                      )?.name ||
-                      'Neues Rezept'}
-                  </strong>
-                  <small>Weiter bearbeiten</small>
-                </span>
-                <ChevronRight size={18} />
-              </button>
-            ))}
-        </section>
-      )}
-      {recipes.length ? (
-        <div className="recipe-grid" key={filter}>
-          {recipes.map((recipe, index) => (
-            <article
-              className="recipe-tile"
-              key={recipe.id}
-              style={
-                {
-                  '--recipe-index': Math.min(index, 5),
-                } as React.CSSProperties
-              }
-            >
-              <button
-                className="recipe-tile-main"
-                onClick={() => onRecipe(recipe)}
-              >
-                <RecipeImage recipe={recipe} imageUrls={imageUrls} />
-                <strong>{recipe.name}</strong>
-                <small>
-                  <Clock3 size={13} /> {recipe.minutes} Min.
-                </small>
-              </button>
-              <button
-                className={`favorite ${recipe.favorite ? 'active' : ''}`}
-                aria-label={
-                  recipe.favorite
-                    ? 'Aus Favoriten entfernen'
-                    : 'Zu Favoriten hinzufügen'
-                }
-                onClick={() => onToggleFavorite(recipe)}
-              >
-                <Heart
-                  size={18}
-                  fill={recipe.favorite ? 'currentColor' : 'none'}
-                />
-              </button>
-              <div className="tile-tags">
-                {visibleRecipeTags(recipe)
-                  .slice(0, 2)
-                  .map((tag) => (
-                    <span key={tag}>{tag}</span>
-                  ))}
-              </div>
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className="no-results">
-          {data.recipes.length ? (
-            <Search size={32} />
-          ) : (
-            <CookingPot size={32} />
-          )}
-          <h2>
-            {data.recipes.length
-              ? 'Kein Rezept gefunden'
-              : 'Deine Rezeptsammlung ist noch leer'}
-          </h2>
-          <p>
-            {data.recipes.length
-              ? 'Probiere einen anderen Suchbegriff oder Filter.'
-              : 'Lege dein erstes Rezept an oder starte mit Beispielen.'}
-          </p>
-          {!data.recipes.length && (
-            <div className="empty-actions compact-actions">
-              <button className="primary-button" onClick={onAdd}>
-                Erstes Rezept anlegen
-              </button>
-              <button className="secondary-button" onClick={onAddSamples}>
-                Beispielrezepte ausprobieren
-              </button>
-            </div>
-          )}
-          {data.recipes.length > 0 && (query || filter !== 'Alle') && (
+          <span className="library-hero-leaves" aria-hidden="true">
+            <img src={assetUrl('assets/basil-header-leaves.png')} alt="" />
+          </span>
+        </header>
+        <IconButton
+          label="Rezept hinzufügen"
+          className="outlined recipes-floating-add"
+          onClick={onAdd}
+        >
+          <Plus size={25} />
+        </IconButton>
+        <label className="search-field">
+          <Search size={19} />
+          <input
+            aria-label="Rezepte suchen"
+            value={query}
+            onChange={(event) => onQuery(event.target.value)}
+            placeholder="Name, Zutat oder Tag suchen …"
+          />
+        </label>
+        <div className="filter-row" aria-label="Rezeptfilter">
+          {filters.map((item) => (
             <button
-              type="button"
-              className="secondary-button no-results-reset"
-              onClick={() => {
-                onQuery('');
-                onFilter('Alle');
+              key={item}
+              className={filter === item ? 'active' : ''}
+              aria-pressed={filter === item}
+              onClick={(event) => {
+                onFilter(item);
+                event.currentTarget.scrollIntoView({
+                  behavior: window.matchMedia(
+                    '(prefers-reduced-motion: reduce)',
+                  ).matches
+                    ? 'auto'
+                    : 'smooth',
+                  block: 'nearest',
+                  inline: 'center',
+                });
               }}
             >
-              Filter zurücksetzen
+              {item === 'Favoriten' && <Heart size={16} />}
+              {(item === 'Schnell' || item === 'Gesund') && (
+                <Sparkles size={16} />
+              )}
+              {(item === 'Vegetarisch' || item === 'Vegan') && (
+                <Leaf size={16} />
+              )}
+              {item}
             </button>
-          )}
+          ))}
         </div>
+        <div className="recipe-library-actions">
+          <button type="button" onClick={() => importFileRef.current?.click()}>
+            <span>
+              <Upload size={21} />
+            </span>
+            <span>
+              <strong>Rezeptdatei importieren</strong>
+              <small>Mampffred Rezept Datei</small>
+            </span>
+            <ChevronRight size={19} />
+          </button>
+          <input
+            ref={importFileRef}
+            hidden
+            type="file"
+            accept=".mampffred-rezept,.json,.txt,application/json,text/plain"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) onImport(file);
+              event.currentTarget.value = '';
+            }}
+          />
+        </div>
+        <details className="recipe-receive-help">
+          <summary>Rezept aus WhatsApp übernehmen</summary>
+          <p>
+            <strong>Android:</strong> {recipeReceiveInstructions.Android}
+          </p>
+          <p>
+            <strong>iPhone:</strong> {recipeReceiveInstructions.iPhone}
+          </p>
+        </details>
+        <span className="sr-only" role="status" aria-live="polite">
+          {recipes.length}{' '}
+          {recipes.length === 1
+            ? 'Rezept wird angezeigt'
+            : 'Rezepte werden angezeigt'}
+        </span>
+        {!query && filter === 'Alle' && data.recipeDrafts.length > 0 && (
+          <section className="recipe-drafts" aria-labelledby="drafts-title">
+            <div>
+              <h2 id="drafts-title">Entwürfe</h2>
+              <small>Automatisch lokal gespeichert</small>
+            </div>
+            {data.recipeDrafts
+              .slice()
+              .sort((left, right) =>
+                right.updatedAt.localeCompare(left.updatedAt),
+              )
+              .map((draft) => (
+                <div className="recipe-draft-row" key={draft.id}>
+                  <button
+                    className="recipe-draft-open"
+                    type="button"
+                    onClick={() => onDraft(draft)}
+                  >
+                    <span>
+                      <strong>
+                        {draft.name.trim() ||
+                          draft.ingredients.find((ingredient) =>
+                            ingredient.name.trim(),
+                          )?.name ||
+                          'Neues Rezept'}
+                      </strong>
+                      <small>Weiter bearbeiten</small>
+                    </span>
+                    <ChevronRight size={18} />
+                  </button>
+                  <button
+                    type="button"
+                    className="recipe-draft-discard"
+                    aria-label={`Entwurf „${draft.name.trim() || draft.ingredients.find((item) => item.name.trim())?.name || 'Neues Rezept'}“ verwerfen`}
+                    onClick={() => setDiscardTarget(draft)}
+                  >
+                    <Trash2 size={17} />
+                    <span>Verwerfen</span>
+                  </button>
+                </div>
+              ))}
+          </section>
+        )}
+        {recipes.length ? (
+          <div className="recipe-grid" key={filter}>
+            {recipes.map((recipe, index) => (
+              <article
+                className="recipe-tile"
+                key={recipe.id}
+                style={
+                  {
+                    '--recipe-index': Math.min(index, 5),
+                  } as React.CSSProperties
+                }
+              >
+                <button
+                  className="recipe-tile-main"
+                  onClick={() => onRecipe(recipe)}
+                >
+                  <RecipeImage recipe={recipe} imageUrls={imageUrls} />
+                  <strong>{recipe.name}</strong>
+                  <small>
+                    <Clock3 size={13} /> {recipe.minutes} Min.
+                  </small>
+                </button>
+                <button
+                  className={`favorite ${recipe.favorite ? 'active' : ''}`}
+                  aria-label={
+                    recipe.favorite
+                      ? 'Aus Favoriten entfernen'
+                      : 'Zu Favoriten hinzufügen'
+                  }
+                  onClick={() => onToggleFavorite(recipe)}
+                >
+                  <Heart
+                    size={18}
+                    fill={recipe.favorite ? 'currentColor' : 'none'}
+                  />
+                </button>
+                <div className="tile-tags">
+                  {visibleRecipeTags(recipe)
+                    .slice(0, 2)
+                    .map((tag) => (
+                      <span key={tag}>{tag}</span>
+                    ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="no-results">
+            {data.recipes.length ? (
+              <Search size={32} />
+            ) : (
+              <CookingPot size={32} />
+            )}
+            <h2>
+              {data.recipes.length
+                ? 'Kein Rezept gefunden'
+                : 'Deine Rezeptsammlung ist noch leer'}
+            </h2>
+            <p>
+              {data.recipes.length
+                ? 'Probiere einen anderen Suchbegriff oder Filter.'
+                : 'Lege dein erstes Rezept an oder starte mit Beispielen.'}
+            </p>
+            {!data.recipes.length && (
+              <div className="empty-actions compact-actions">
+                <button className="primary-button" onClick={onAdd}>
+                  Erstes Rezept anlegen
+                </button>
+                <button className="secondary-button" onClick={onAddSamples}>
+                  Beispielrezepte ausprobieren
+                </button>
+              </div>
+            )}
+            {data.recipes.length > 0 && (query || filter !== 'Alle') && (
+              <button
+                type="button"
+                className="secondary-button no-results-reset"
+                onClick={() => {
+                  onQuery('');
+                  onFilter('Alle');
+                }}
+              >
+                Filter zurücksetzen
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      {discardTarget && (
+        <DiscardDraftDialog
+          name={
+            discardTarget.name.trim() ||
+            discardTarget.ingredients.find((item) => item.name.trim())?.name ||
+            'Neues Rezept'
+          }
+          existingRecipe={Boolean(discardTarget.baseRecipeId)}
+          onCancel={() => setDiscardTarget(undefined)}
+          onConfirm={async () => {
+            await onDiscardDraft(discardTarget.id);
+            setDiscardTarget(undefined);
+          }}
+        />
       )}
-    </div>
+    </>
   );
 }
 
@@ -2507,7 +2551,9 @@ function IngredientCombobox({
   onSelected,
   onCreateCustom,
   registerInput,
+  error,
 }: {
+  error?: string;
   ingredient: RecipeIngredient;
   index: number;
   customFoods: readonly CustomFood[];
@@ -2643,7 +2689,12 @@ function IngredientCombobox({
           }}
           role="combobox"
           aria-label={`Lebensmittel für Zutat ${index + 1}`}
-          aria-describedby={`${stableId}-help`}
+          aria-invalid={Boolean(error) || undefined}
+          aria-describedby={
+            error
+              ? `${stableId}-help recipe-ingredients-error`
+              : `${stableId}-help`
+          }
           aria-autocomplete="list"
           aria-expanded={open}
           aria-controls={`${stableId}-listbox`}
@@ -2655,7 +2706,7 @@ function IngredientCombobox({
           autoComplete="off"
           value={ingredient.name}
           maxLength={500}
-          onFocus={() => setOpen(true)}
+          onFocus={() => setOpen(!error)}
           onBlur={() => window.setTimeout(() => setOpen(false), 100)}
           onChange={(event) => {
             const name = event.target.value;
@@ -2693,7 +2744,7 @@ function IngredientCombobox({
               setOpen(false);
             }
           }}
-          placeholder="Lebensmittel suchen oder eingeben"
+          placeholder="Zutat suchen"
         />
         <button
           type="button"
@@ -3009,6 +3060,107 @@ function CustomFoodSheet({
   );
 }
 
+function RecipeImageSheet(
+  props: React.ComponentProps<typeof ImageFramingEditor>,
+) {
+  const dialogRef = useModalFocus<HTMLElement>(props.onCancel);
+  const onCancel = useRef(props.onCancel);
+  onCancel.current = props.onCancel;
+  useEffect(() => {
+    const onBack = (event: PopStateEvent) => {
+      event.stopImmediatePropagation();
+      window.history.pushState(window.history.state, '');
+      onCancel.current();
+    };
+    window.addEventListener('popstate', onBack, true);
+    return () => window.removeEventListener('popstate', onBack, true);
+  }, []);
+  return (
+    <div className="modal-backdrop image-edit-backdrop">
+      <section
+        ref={dialogRef}
+        className="image-edit-screen"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="image-editor-title"
+      >
+        <ImageFramingEditor {...props} />
+      </section>
+    </div>
+  );
+}
+
+function DiscardDraftDialog({
+  name,
+  existingRecipe,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  existingRecipe: boolean;
+  onCancel: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const cancel = () => {
+    if (!busy) onCancel();
+  };
+  const dialogRef = useModalFocus<HTMLElement>(cancel);
+  return (
+    <div className="modal-backdrop">
+      <section
+        ref={dialogRef}
+        className="confirm-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="discard-draft-title"
+        aria-describedby="discard-draft-description"
+      >
+        <div className="lock-badge danger-icon">
+          <Trash2 size={20} />
+        </div>
+        <h2 id="discard-draft-title">Entwurf verwerfen?</h2>
+        <p id="discard-draft-description">
+          Der Entwurf „{name || 'Neues Rezept'}“ wird gelöscht.{' '}
+          {existingRecipe
+            ? 'Dein gespeichertes Rezept bleibt erhalten.'
+            : 'Diese Aktion kann nicht rückgängig gemacht werden.'}
+        </p>
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="dialog-actions">
+          <button type="button" onClick={cancel} disabled={busy}>
+            Behalten
+          </button>
+          <button
+            type="button"
+            className="danger-solid"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError('');
+              try {
+                await onConfirm();
+              } catch {
+                setError(
+                  'Der Entwurf konnte nicht verworfen werden. Bitte versuche es erneut.',
+                );
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? 'Wird verworfen …' : 'Entwurf verwerfen'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function RecipeEditor({
   recipe,
   savedDraft,
@@ -3126,6 +3278,7 @@ function RecipeEditor({
   const [previewUrl, setPreviewUrl] = useState<string>();
   const [imageError, setImageError] = useState('');
   const [saveError, setSaveError] = useState('');
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
   const [removeImage, setRemoveImage] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -3133,8 +3286,6 @@ function RecipeEditor({
   const unitRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const foodInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [ingredientAnnouncement, setIngredientAnnouncement] = useState('');
-  const draggedStepRef = useRef<number | undefined>(undefined);
-  const [draggedStep, setDraggedStep] = useState<number>();
   const createdAt = useRef(savedDraft?.createdAt ?? new Date().toISOString());
   const autosaveCallbacks = useRef({ onAutosave, onDiscardDraft });
   autosaveCallbacks.current = { onAutosave, onDiscardDraft };
@@ -3152,23 +3303,6 @@ function RecipeEditor({
       foodInputRefs.current[id]?.focus();
       foodInputRefs.current[id]?.scrollIntoView({ block: 'center' });
     });
-  };
-  const moveStep = (from: number, to: number) => {
-    if (from === to || from < 0 || to < 0) return;
-    setDraft((current) => {
-      if (from >= current.steps.length || to >= current.steps.length)
-        return current;
-      const steps = [...current.steps];
-      const [moved] = steps.splice(from, 1);
-      steps.splice(to, 0, moved);
-      return { ...current, steps };
-    });
-    draggedStepRef.current = to;
-    setDraggedStep(to);
-  };
-  const finishStepDrag = () => {
-    draggedStepRef.current = undefined;
-    setDraggedStep(undefined);
   };
   const initialAutosaveSignature = useRef(
     JSON.stringify({ draft, draftFoodOverrides, proteinPerServing }),
@@ -3206,6 +3340,14 @@ function RecipeEditor({
     };
   }, [draft, draftFoodOverrides, proteinPerServing, recipe]);
   const requestClose = async () => {
+    if (discardOpen) {
+      setDiscardOpen(false);
+      return;
+    }
+    if (framingOpen) {
+      setFramingOpen(false);
+      return;
+    }
     if (saveBusy) return;
     if (autosaveSignature === initialAutosaveSignature.current) {
       onClose();
@@ -3234,12 +3376,77 @@ function RecipeEditor({
   const proteinInvalid =
     proteinPerServing.trim() !== '' &&
     (!Number.isFinite(proteinValue) || proteinValue <= 0 || proteinValue > 500);
+  const [editorStage, setEditorStage] = useState(0);
+  const [validationAttempted, setValidationAttempted] = useState(false);
+  const [numberErrors, setNumberErrors] = useState<Record<string, string>>({});
+  const nameError =
+    validationAttempted && !draft.name.trim()
+      ? 'Bitte gib deinem Rezept einen Namen.'
+      : '';
+  const ingredientsError =
+    validationAttempted && !draft.ingredients.some((item) => item.name.trim())
+      ? 'Füge mindestens eine Zutat hinzu.'
+      : '';
+  const stageNames = ['Grundlagen', 'Zutaten', 'Zubereitung'];
   const canSave = Boolean(
     draft.name.trim() &&
     draft.ingredients.some((item) => item.name.trim()) &&
     !proteinInvalid &&
     !framingOpen,
   );
+  function showStage(stage: number, target?: HTMLElement) {
+    setEditorStage(stage);
+    window.requestAnimationFrame(() => {
+      let parent = target?.parentElement;
+      while (parent) {
+        if (parent instanceof HTMLDetailsElement) parent.open = true;
+        parent = parent.parentElement;
+      }
+      dialogRef.current?.scrollTo({ top: 0 });
+      (
+        target ??
+        dialogRef.current?.querySelector<HTMLElement>(`#wizard-stage-${stage}`)
+      )?.focus({ preventScroll: true });
+      if (target) target.scrollIntoView({ block: 'center' });
+    });
+  }
+  function validateRecipe() {
+    setValidationAttempted(true);
+    const invalid = [
+      ...(dialogRef.current?.querySelectorAll<HTMLInputElement>(
+        'input:invalid',
+      ) ?? []),
+    ];
+    setNumberErrors(
+      Object.fromEntries(
+        invalid
+          .filter((input) => input.dataset.validationField)
+          .map((input) => [
+            input.dataset.validationField!,
+            input.validationMessage,
+          ]),
+      ),
+    );
+    const target = !draft.name.trim()
+      ? dialogRef.current?.querySelector<HTMLInputElement>(
+          '[data-initial-focus]',
+        )
+      : (invalid[0] ??
+        (proteinInvalid
+          ? dialogRef.current?.querySelector<HTMLInputElement>(
+              '[aria-describedby*="protein-editor-help"]',
+            )
+          : !draft.ingredients.some((item) => item.name.trim())
+            ? Object.values(foodInputRefs.current).find(Boolean)
+            : undefined));
+    if (!target) return true;
+    const stage = Number(
+      target.closest<HTMLElement>('[data-editor-stage]')?.dataset.editorStage ??
+        0,
+    );
+    showStage(stage, target);
+    return false;
+  }
   const hasDraftContent = hasMeaningfulRecipeDraft(createDraftRecord());
   const displayedImage =
     previewUrl ??
@@ -3358,28 +3565,52 @@ function RecipeEditor({
   }, [file]);
   return (
     <>
-      <div className={`modal-backdrop ${inactive ? 'underlay' : ''}`}>
+      <div
+        className={`modal-backdrop ${inactive || framingOpen ? 'underlay' : ''}`}
+      >
         <form
           ref={dialogRef}
-          className="editor-modal"
+          className="editor-modal editor-wizard"
+          noValidate
           role="dialog"
-          aria-modal={!inactive}
+          aria-modal={!inactive && !framingOpen && !discardOpen}
           aria-hidden={
             inactive ||
+            discardOpen ||
+            framingOpen ||
             Boolean(foodPicker) ||
             Boolean(customFoodTarget) ||
             undefined
           }
           inert={
             inactive ||
+            discardOpen ||
+            framingOpen ||
             Boolean(foodPicker) ||
             Boolean(customFoodTarget) ||
             undefined
           }
           aria-labelledby="recipe-editor-title"
+          onInputCapture={(event) => {
+            if (saveError) setSaveError('');
+            const input = event.target as HTMLInputElement;
+            const key = input.dataset.validationField;
+            if (key)
+              setNumberErrors((current) => {
+                const next = { ...current };
+                delete next[key];
+                return next;
+              });
+          }}
           onSubmit={async (event) => {
             event.preventDefault();
-            if (!canSave || saveBusy) return;
+            if (saveBusy || framingOpen) return;
+            if (editorStage < 2) {
+              setSaveError('');
+              showStage(editorStage + 1);
+              return;
+            }
+            if (!validateRecipe() || !canSave) return;
             editorStopped.current = true;
             imageSelection.current += 1;
             setSaveBusy(true);
@@ -3434,63 +3665,118 @@ function RecipeEditor({
             </IconButton>
             <h2 id="recipe-editor-title">
               {recipe ? 'Rezept bearbeiten' : 'Rezept anlegen'}
-              {draftSaveStatus !== 'idle' && (
-                <small className="draft-save-status" aria-live="polite">
-                  {draftSaveStatus === 'saving'
-                    ? 'Entwurf wird gespeichert …'
-                    : 'Entwurf lokal gespeichert'}
-                </small>
-              )}
+              <small className="draft-save-status" aria-live="polite">
+                {draftSaveStatus === 'saving'
+                  ? 'Entwurf wird gespeichert …'
+                  : draftSaveStatus === 'saved' || savedDraft
+                    ? 'Entwurf lokal gespeichert'
+                    : recipe
+                      ? 'Gespeichertes Rezept'
+                      : 'Dein Entwurf bleibt auf diesem Gerät'}
+              </small>
             </h2>
-            <button
-              className="text-action"
-              aria-label="Rezept speichern"
-              disabled={!canSave || saveBusy}
-            >
-              Fertig
-            </button>
+            {hasDraftContent && (
+              <button
+                type="button"
+                className="editor-discard-draft"
+                aria-label="Entwurf verwerfen"
+                title="Entwurf verwerfen"
+                disabled={saveBusy}
+                onClick={() => setDiscardOpen(true)}
+              >
+                <Trash2 size={20} />
+              </button>
+            )}
           </div>
+          <nav className="wizard-progress" aria-label="Rezept-Erstellung">
+            <ol>
+              {stageNames.map((name, index) => (
+                <li
+                  key={name}
+                  className={index <= editorStage ? 'reached' : ''}
+                >
+                  <button
+                    type="button"
+                    aria-label={`${index + 1}. ${name}`}
+                    aria-current={index === editorStage ? 'step' : undefined}
+                    disabled={saveBusy}
+                    onClick={() => {
+                      setSaveError('');
+                      showStage(index);
+                    }}
+                  >
+                    <span>
+                      {index < editorStage ? <Check size={13} /> : index + 1}
+                    </span>
+                    <small>{name}</small>
+                  </button>
+                </li>
+              ))}
+            </ol>
+            <p aria-live="polite">
+              {editorStage + 1} von 3 · {stageNames[editorStage]}
+            </p>
+          </nav>
           {saveError && (
             <small className="form-error editor-save-error" role="alert">
               {saveError}
             </small>
           )}
-          <label>
-            Rezeptname
-            <input
-              data-initial-focus
-              value={draft.name}
-              maxLength={200}
-              onChange={(event) =>
-                setDraft({ ...draft, name: event.target.value })
-              }
-              placeholder="z. B. Gemüse-Curry"
-            />
-          </label>
-          <label>
-            Portionen
-            <input
-              type="number"
-              min="1"
-              max="1000"
-              value={draft.servings}
-              onFocus={(event) => event.currentTarget.select()}
-              onChange={(event) => {
-                const value = event.currentTarget.valueAsNumber;
-                if (Number.isInteger(value) && value >= 1 && value <= 1000)
-                  setDraft({ ...draft, servings: value });
-              }}
-            />
-          </label>
-          <details className="recipe-extra-details" open>
-            <summary>Weitere Angaben (optional)</summary>
-            <details className="recipe-image-details" open>
-              <summary>
-                {displayedImage ? 'Rezeptbild' : 'Bild hinzufügen (optional)'}
-              </summary>
+          <section
+            className="wizard-panel"
+            data-editor-stage="0"
+            hidden={editorStage !== 0}
+            aria-labelledby="wizard-stage-0"
+          >
+            <h3 id="wizard-stage-0" tabIndex={-1}>
+              Grundlagen
+            </h3>
+            <p className="wizard-intro">
+              Die wichtigsten Infos zu deinem Rezept.
+            </p>
+            <label>
+              Rezeptname
+              <input
+                data-initial-focus
+                aria-label="Rezeptname"
+                aria-required="true"
+                aria-invalid={Boolean(nameError) || undefined}
+                aria-describedby={nameError ? 'recipe-name-error' : undefined}
+                value={draft.name}
+                maxLength={200}
+                onChange={(event) =>
+                  setDraft({ ...draft, name: event.target.value })
+                }
+                placeholder="z. B. Gemüse-Curry"
+              />
+              {nameError && (
+                <small
+                  id="recipe-name-error"
+                  className="field-validation-error"
+                  role="alert"
+                >
+                  {nameError}
+                </small>
+              )}
+            </label>
+            <div className="wizard-recipe-image">
+              <span className="wizard-field-label">
+                Rezeptbild <small>(optional)</small>
+              </span>
               <button
                 type="button"
                 className="image-drop"
+                style={
+                  draft.imageFrame?.crop
+                    ? {
+                        aspectRatio:
+                          (draft.imageFrame.crop.width *
+                            draft.imageFrame.crop.sourceAspect) /
+                          draft.imageFrame.crop.height,
+                        height: 'auto',
+                      }
+                    : undefined
+                }
                 onClick={() =>
                   displayedImage
                     ? setFramingOpen(true)
@@ -3557,11 +3843,9 @@ function RecipeEditor({
               />
               {displayedImage && (
                 <div className="image-actions">
-                  <button
-                    type="button"
-                    onClick={() => setFramingOpen(!framingOpen)}
-                  >
-                    <Pencil size={16} /> Ausschnitt anpassen
+                  <button type="button" onClick={() => setFramingOpen(true)}>
+                    <Pencil size={19} />
+                    <span className="sr-only">Bild bearbeiten</span>
                   </button>
                   <button
                     type="button"
@@ -3589,21 +3873,138 @@ function RecipeEditor({
                 </div>
               )}
               {imageError && <small className="form-error">{imageError}</small>}
-              {displayedImage && framingOpen && (
-                <ImageFramingEditor
-                  key={displayedImage}
-                  src={displayedImage}
-                  initialFrame={draft.imageFrame}
-                  onCancel={() => setFramingOpen(false)}
-                  onApply={(imageFrame) => {
-                    setDraft((current) => ({ ...current, imageFrame }));
-                    setFramingOpen(false);
-                  }}
-                />
-              )}
-            </details>
+            </div>
+            <div className="wizard-basics-numbers">
+              {' '}
+              <div className="wizard-number-field">
+                Portionen
+                <span className="wizard-number-control">
+                  <button
+                    type="button"
+                    aria-label="Portionen verringern"
+                    disabled={draft.servings <= 1}
+                    onClick={() =>
+                      setDraft((current) => ({
+                        ...current,
+                        servings: Math.max(1, current.servings - 1),
+                      }))
+                    }
+                  >
+                    <Minus size={16} />
+                  </button>
+                  <input
+                    aria-label="Portionen"
+                    data-validation-field="servings"
+                    aria-invalid={Boolean(numberErrors.servings) || undefined}
+                    aria-describedby={
+                      numberErrors.servings
+                        ? 'recipe-servings-error'
+                        : undefined
+                    }
+                    type="number"
+                    min="1"
+                    max="1000"
+                    value={draft.servings}
+                    onFocus={(event) => event.currentTarget.select()}
+                    onChange={(event) => {
+                      const value = event.currentTarget.valueAsNumber;
+                      if (
+                        Number.isInteger(value) &&
+                        value >= 1 &&
+                        value <= 1000
+                      )
+                        setDraft({ ...draft, servings: value });
+                    }}
+                  />
+                  <button
+                    type="button"
+                    aria-label="Portionen erhöhen"
+                    disabled={draft.servings >= 1000}
+                    onClick={() =>
+                      setDraft((current) => ({
+                        ...current,
+                        servings: Math.min(1000, current.servings + 1),
+                      }))
+                    }
+                  >
+                    <Plus size={16} />
+                  </button>
+                </span>
+                {numberErrors.servings && (
+                  <small
+                    id="recipe-servings-error"
+                    className="field-validation-error"
+                    role="alert"
+                  >
+                    {numberErrors.servings}
+                  </small>
+                )}
+              </div>
+              <div className="wizard-number-field">
+                Kochzeit (Min.)
+                <span className="wizard-number-control">
+                  <button
+                    type="button"
+                    aria-label="Kochzeit verringern"
+                    disabled={draft.minutes <= 1}
+                    onClick={() =>
+                      setDraft((current) => ({
+                        ...current,
+                        minutes: Math.max(1, current.minutes - 5),
+                      }))
+                    }
+                  >
+                    <Minus size={16} />
+                  </button>
+                  <input
+                    aria-label="Kochzeit (Min.)"
+                    data-validation-field="minutes"
+                    aria-invalid={Boolean(numberErrors.minutes) || undefined}
+                    aria-describedby={
+                      numberErrors.minutes ? 'recipe-minutes-error' : undefined
+                    }
+                    type="number"
+                    min="1"
+                    max="10080"
+                    value={draft.minutes}
+                    onFocus={(event) => event.currentTarget.select()}
+                    onChange={(event) => {
+                      const value = event.currentTarget.valueAsNumber;
+                      if (
+                        Number.isInteger(value) &&
+                        value >= 1 &&
+                        value <= 10080
+                      )
+                        setDraft({ ...draft, minutes: value });
+                    }}
+                  />
+                  <button
+                    type="button"
+                    aria-label="Kochzeit erhöhen"
+                    disabled={draft.minutes >= 10080}
+                    onClick={() =>
+                      setDraft((current) => ({
+                        ...current,
+                        minutes: Math.min(10080, current.minutes + 5),
+                      }))
+                    }
+                  >
+                    <Plus size={16} />
+                  </button>
+                </span>
+                {numberErrors.minutes && (
+                  <small
+                    id="recipe-minutes-error"
+                    className="field-validation-error"
+                    role="alert"
+                  >
+                    {numberErrors.minutes}
+                  </small>
+                )}
+              </div>
+            </div>
             <label>
-              Beschreibung
+              Beschreibung (optional)
               <textarea
                 value={draft.description}
                 maxLength={5000}
@@ -3613,124 +4014,156 @@ function RecipeEditor({
                 placeholder="Was macht das Gericht besonders?"
               />
             </label>
-            <div className="field-row">
-              <label>
-                Kochzeit (Min.)
-                <input
-                  type="number"
-                  min="1"
-                  max="10080"
-                  value={draft.minutes}
-                  onFocus={(event) => event.currentTarget.select()}
-                  onChange={(event) => {
-                    const value = event.currentTarget.valueAsNumber;
-                    if (Number.isInteger(value) && value >= 1 && value <= 10080)
-                      setDraft({ ...draft, minutes: value });
-                  }}
-                />
-              </label>
-            </div>
-            <fieldset className="editor-tag-picker">
-              <legend>Eigenschaften</legend>
-              <p>Wähle nur Merkmale, die dauerhaft beim Rezept passen.</p>
-              <div>
-                {reusableRecipeTags.map((tag) => {
-                  const active = draft.tags.some(
-                    (entry) =>
-                      entry.toLocaleLowerCase('de-DE') ===
-                      tag.toLocaleLowerCase('de-DE'),
-                  );
-                  return (
-                    <button
-                      type="button"
-                      key={tag}
-                      className={active ? 'active' : ''}
-                      aria-pressed={active}
-                      onClick={() =>
-                        setDraft({
-                          ...draft,
-                          tags: active
-                            ? draft.tags.filter(
-                                (entry) =>
-                                  entry.toLocaleLowerCase('de-DE') !==
-                                  tag.toLocaleLowerCase('de-DE'),
-                              )
-                            : [...draft.tags, tag],
-                        })
-                      }
-                    >
-                      <Leaf size={15} /> {tag}
-                    </button>
-                  );
-                })}
-              </div>
-            </fieldset>
-          </details>
-          <details className="nutrition-editor">
-            <summary>
-              {proteinPerServing.trim()
-                ? 'Protein: eigene Angabe'
-                : automaticCalculation?.wholeRecipe.proteinG &&
-                    draft.servings > 0
-                  ? `Protein: ca. ${
-                      Math.round(
-                        (automaticCalculation.wholeRecipe.proteinG.value /
-                          draft.servings) *
-                          10,
-                      ) / 10
-                    } g pro Portion · aus Zutaten geschätzt`
-                  : automaticEstimates && automaticCalculation
-                    ? `Protein noch nicht vollständig · ${proteinIssues.length} ${
-                        proteinIssues.length === 1 ? 'Zutat' : 'Zutaten'
-                      } prüfen`
-                    : 'Nährwerte (optional)'}
-            </summary>
-            {automaticEstimates && automaticCalculation && (
-              <div className="nutrition-calculation-preview" aria-live="polite">
-                <strong>Schätzung aus Zutaten</strong>
-                <span>
-                  {automaticCalculation.resolvedIngredients} von{' '}
-                  {automaticCalculation.totalIngredients} Zutaten berücksichtigt
-                </span>
-                {(automaticCalculation.assumedAmounts > 0 ||
-                  automaticCalculation.ignoredIngredients > 0) && (
-                  <small>
-                    {automaticCalculation.assumedAmounts > 0
-                      ? `${automaticCalculation.assumedAmounts} Mengen mit hinterlegter Umrechnung`
-                      : ''}
-                    {automaticCalculation.assumedAmounts > 0 &&
-                    automaticCalculation.ignoredIngredients > 0
-                      ? ' · '
-                      : ''}
-                    {automaticCalculation.ignoredIngredients > 0
-                      ? `${automaticCalculation.ignoredIngredients} bewusst ausgelassen`
-                      : ''}
-                  </small>
-                )}
-                {automaticCalculation.ingredients
-                  .filter(
-                    (ingredient) =>
-                      draftFoodOverrides[ingredient.overrideKey] !== undefined,
-                  )
-                  .map((ingredient) => {
-                    const override = draftFoodOverrides[ingredient.overrideKey];
-                    const label =
-                      override?.kind === 'food'
-                        ? `${ingredient.food?.name ?? 'Lebensmittel'} · selbst zugeordnet`
-                        : override?.kind === 'whole-ingredient'
-                          ? `${override.nutrients.proteinG ?? '–'} g Protein · eigener Wert`
-                          : 'Bewusst ausgelassen';
-                    const originalIngredient =
-                      draft.ingredients[ingredient.ingredientIndex];
+            <details className="recipe-extra-details">
+              <summary>
+                Weitere Angaben (optional)
+                <ChevronDown size={18} />
+              </summary>
+              <fieldset className="editor-tag-picker">
+                <legend>Eigenschaften</legend>
+                <p>Wähle nur Merkmale, die dauerhaft beim Rezept passen.</p>
+                <div>
+                  {reusableRecipeTags.map((tag) => {
+                    const active = draft.tags.some(
+                      (entry) =>
+                        entry.toLocaleLowerCase('de-DE') ===
+                        tag.toLocaleLowerCase('de-DE'),
+                    );
                     return (
+                      <button
+                        type="button"
+                        key={tag}
+                        className={active ? 'active' : ''}
+                        aria-pressed={active}
+                        onClick={() =>
+                          setDraft({
+                            ...draft,
+                            tags: active
+                              ? draft.tags.filter(
+                                  (entry) =>
+                                    entry.toLocaleLowerCase('de-DE') !==
+                                    tag.toLocaleLowerCase('de-DE'),
+                                )
+                              : [...draft.tags, tag],
+                          })
+                        }
+                      >
+                        <Leaf size={15} /> {tag}
+                      </button>
+                    );
+                  })}
+                </div>
+              </fieldset>
+              <details className="nutrition-editor">
+                <summary>
+                  {proteinPerServing.trim()
+                    ? 'Protein: eigene Angabe'
+                    : automaticCalculation?.wholeRecipe.proteinG &&
+                        draft.servings > 0
+                      ? `Protein: ca. ${
+                          Math.round(
+                            (automaticCalculation.wholeRecipe.proteinG.value /
+                              draft.servings) *
+                              10,
+                          ) / 10
+                        } g pro Portion · aus Zutaten geschätzt`
+                      : automaticEstimates && automaticCalculation
+                        ? `Protein noch nicht vollständig · ${proteinIssues.length} ${
+                            proteinIssues.length === 1 ? 'Zutat' : 'Zutaten'
+                          } prüfen`
+                        : 'Nährwerte (optional)'}
+                </summary>
+                {automaticEstimates && automaticCalculation && (
+                  <div
+                    className="nutrition-calculation-preview"
+                    aria-live="polite"
+                  >
+                    <strong>Schätzung aus Zutaten</strong>
+                    <span>
+                      {automaticCalculation.resolvedIngredients} von{' '}
+                      {automaticCalculation.totalIngredients} Zutaten
+                      berücksichtigt
+                    </span>
+                    {(automaticCalculation.assumedAmounts > 0 ||
+                      automaticCalculation.ignoredIngredients > 0) && (
+                      <small>
+                        {automaticCalculation.assumedAmounts > 0
+                          ? `${automaticCalculation.assumedAmounts} Mengen mit hinterlegter Umrechnung`
+                          : ''}
+                        {automaticCalculation.assumedAmounts > 0 &&
+                        automaticCalculation.ignoredIngredients > 0
+                          ? ' · '
+                          : ''}
+                        {automaticCalculation.ignoredIngredients > 0
+                          ? `${automaticCalculation.ignoredIngredients} bewusst ausgelassen`
+                          : ''}
+                      </small>
+                    )}
+                    {automaticCalculation.ingredients
+                      .filter(
+                        (ingredient) =>
+                          draftFoodOverrides[ingredient.overrideKey] !==
+                          undefined,
+                      )
+                      .map((ingredient) => {
+                        const override =
+                          draftFoodOverrides[ingredient.overrideKey];
+                        const label =
+                          override?.kind === 'food'
+                            ? `${ingredient.food?.name ?? 'Lebensmittel'} · selbst zugeordnet`
+                            : override?.kind === 'whole-ingredient'
+                              ? `${override.nutrients.proteinG ?? '–'} g Protein · eigener Wert`
+                              : 'Bewusst ausgelassen';
+                        const originalIngredient =
+                          draft.ingredients[ingredient.ingredientIndex];
+                        return (
+                          <div
+                            className="nutrition-ingredient-issue nutrition-ingredient-override"
+                            key={`override-${ingredient.ingredientIndex}`}
+                          >
+                            <small>
+                              {draft.ingredients[ingredient.ingredientIndex]
+                                ?.name || 'Unbenannte Zutat'}
+                              : {label}
+                            </small>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setFoodPicker({
+                                  key: ingredient.overrideKey,
+                                  name:
+                                    draft.ingredients[
+                                      ingredient.ingredientIndex
+                                    ]?.name || 'Unbenannte Zutat',
+                                  amount: originalIngredient?.amount ?? '',
+                                  unit: originalIngredient?.unit ?? '',
+                                  mode:
+                                    override?.kind === 'whole-ingredient' ||
+                                    ingredient.status === 'amount-unresolved'
+                                      ? 'amount'
+                                      : 'mapping',
+                                })
+                              }
+                            >
+                              Bearbeiten
+                            </button>
+                          </div>
+                        );
+                      })}
+                    {proteinIssues.map((ingredient) => (
                       <div
-                        className="nutrition-ingredient-issue nutrition-ingredient-override"
-                        key={`override-${ingredient.ingredientIndex}`}
+                        className="nutrition-ingredient-issue"
+                        key={ingredient.ingredientIndex}
                       >
                         <small>
                           {draft.ingredients[ingredient.ingredientIndex]
                             ?.name || 'Unbenannte Zutat'}
-                          : {label}
+                          :{' '}
+                          {ingredient.status === 'amount-unresolved'
+                            ? 'Menge oder Einheit lässt sich noch nicht einschätzen.'
+                            : ingredient.food
+                              ? 'Für diesen Eintrag fehlt ein Proteinwert.'
+                              : 'Keine eindeutige Zuordnung gefunden.'}
                         </small>
                         <button
                           type="button"
@@ -3740,432 +4173,400 @@ function RecipeEditor({
                               name:
                                 draft.ingredients[ingredient.ingredientIndex]
                                   ?.name || 'Unbenannte Zutat',
-                              amount: originalIngredient?.amount ?? '',
-                              unit: originalIngredient?.unit ?? '',
+                              amount:
+                                draft.ingredients[ingredient.ingredientIndex]
+                                  ?.amount ?? '',
+                              unit:
+                                draft.ingredients[ingredient.ingredientIndex]
+                                  ?.unit ?? '',
                               mode:
-                                override?.kind === 'whole-ingredient' ||
                                 ingredient.status === 'amount-unresolved'
                                   ? 'amount'
                                   : 'mapping',
                             })
                           }
                         >
-                          Bearbeiten
+                          {ingredient.status === 'amount-unresolved'
+                            ? 'Wert eingeben'
+                            : 'Zuordnen'}
                         </button>
                       </div>
-                    );
-                  })}
-                {proteinIssues.map((ingredient) => (
-                  <div
-                    className="nutrition-ingredient-issue"
-                    key={ingredient.ingredientIndex}
-                  >
-                    <small>
-                      {draft.ingredients[ingredient.ingredientIndex]?.name ||
-                        'Unbenannte Zutat'}
-                      :{' '}
-                      {ingredient.status === 'amount-unresolved'
-                        ? 'Menge oder Einheit lässt sich noch nicht einschätzen.'
-                        : ingredient.food
-                          ? 'Für diesen Eintrag fehlt ein Proteinwert.'
-                          : 'Keine eindeutige Zuordnung gefunden.'}
-                    </small>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setFoodPicker({
-                          key: ingredient.overrideKey,
-                          name:
-                            draft.ingredients[ingredient.ingredientIndex]
-                              ?.name || 'Unbenannte Zutat',
-                          amount:
-                            draft.ingredients[ingredient.ingredientIndex]
-                              ?.amount ?? '',
-                          unit:
-                            draft.ingredients[ingredient.ingredientIndex]
-                              ?.unit ?? '',
-                          mode:
-                            ingredient.status === 'amount-unresolved'
-                              ? 'amount'
-                              : 'mapping',
-                        })
-                      }
-                    >
-                      {ingredient.status === 'amount-unresolved'
-                        ? 'Wert eingeben'
-                        : 'Zuordnen'}
-                    </button>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
-            <label>
-              Eigener Proteinwert pro Portion (optional)
-              <span className="input-with-unit">
-                <input
-                  type="number"
-                  min="0.1"
-                  max="500"
-                  step="0.1"
-                  inputMode="decimal"
-                  aria-invalid={proteinInvalid}
-                  aria-describedby={
-                    proteinInvalid
-                      ? 'protein-editor-help protein-editor-error'
-                      : 'protein-editor-help'
-                  }
-                  value={proteinPerServing}
-                  onChange={(event) => setProteinPerServing(event.target.value)}
-                  placeholder="z. B. 18"
-                />
-                <span>g</span>
-              </span>
-            </label>
-            <p id="protein-editor-help">
-              Deine Angabe hat immer Vorrang vor der Schätzung aus Zutaten. Lass
-              das Feld leer, wenn Mampffred aus den Zutaten rechnen soll. Alles
-              bleibt auf deinem Gerät.
-            </p>
-            {proteinInvalid && (
-              <small
-                id="protein-editor-error"
-                className="form-error"
-                role="status"
-              >
-                Bitte prüfe den Proteinwert.
-              </small>
-            )}
-            {proteinPerServing.trim() !== '' && draft.servings > 0 && (
-              <small>
-                Das entspricht ca.{' '}
-                {Math.round(
-                  Number(proteinPerServing || 0) * draft.servings * 10,
-                ) / 10}{' '}
-                g für das gesamte Rezept.
-              </small>
-            )}
-          </details>
-          <fieldset className="ingredient-fieldset">
-            <legend>Zutaten</legend>
-            {draft.ingredients.map((item, index) => (
-              <div className="ingredient-editor" key={item.id ?? index}>
-                <div className="ingredient-editor-heading">
-                  <strong>Zutat {index + 1}</strong>
-                  <IconButton
-                    label={`Zutat ${index + 1} entfernen`}
-                    onClick={() => {
-                      if (draft.ingredients.length === 1) {
-                        setDraft({
-                          ...draft,
-                          ingredients: [
-                            {
-                              id: item.id ?? crypto.randomUUID(),
-                              amount: '',
-                              unit: '',
-                              name: '',
-                            },
-                          ],
-                        });
-                        setIngredientAnnouncement('Zutat 1 wurde geleert.');
-                        window.requestAnimationFrame(() =>
-                          foodInputRefs.current[
-                            item.id ?? String(index)
-                          ]?.focus(),
-                        );
-                        return;
-                      }
-                      const focusId =
-                        draft.ingredients[index + 1]?.id ??
-                        draft.ingredients[index - 1]?.id;
-                      setDraft({
-                        ...draft,
-                        ingredients: draft.ingredients.filter(
-                          (_, itemIndex) => itemIndex !== index,
-                        ),
-                      });
-                      setIngredientAnnouncement(
-                        `Zutat ${index + 1} wurde entfernt.`,
-                      );
-                      window.requestAnimationFrame(() => {
-                        if (focusId) foodInputRefs.current[focusId]?.focus();
-                      });
-                    }}
-                  >
-                    <Trash2 size={16} />
-                  </IconButton>
-                </div>
-                <IngredientCombobox
-                  ingredient={item}
-                  index={index}
-                  customFoods={customFoods}
-                  onChange={(ingredient) => {
-                    setDraft({
-                      ...draft,
-                      ingredients: draft.ingredients.map((entry, itemIndex) =>
-                        itemIndex === index ? ingredient : entry,
-                      ),
-                    });
-                    if (ingredient.foodLink?.foodId !== item.foodLink?.foodId)
-                      setDraftFoodOverrides((current) => {
-                        const next = { ...current };
-                        delete next[
-                          ingredientOverrideKey(
-                            draft.id ?? 'preview',
-                            item.id ?? `ingredient-${index}`,
-                          )
-                        ];
-                        return next;
-                      });
-                  }}
-                  onSelected={() =>
-                    amountRefs.current[item.id ?? String(index)]?.focus()
-                  }
-                  onCreateCustom={(name) =>
-                    setCustomFoodTarget({
-                      ingredientId: item.id ?? String(index),
-                      name,
-                    })
-                  }
-                  registerInput={(node) => {
-                    foodInputRefs.current[item.id ?? String(index)] = node;
-                  }}
-                />
-                <div className="ingredient-amount-row">
-                  <label>
-                    Menge
+                )}
+                <label>
+                  Eigener Proteinwert pro Portion (optional)
+                  <span className="input-with-unit">
                     <input
-                      ref={(node) => {
-                        amountRefs.current[item.id ?? String(index)] = node;
-                      }}
-                      aria-label={`Menge für Zutat ${index + 1}`}
+                      type="number"
+                      min="0.1"
+                      max="500"
+                      step="0.1"
                       inputMode="decimal"
-                      value={item.amount}
-                      maxLength={100}
+                      aria-invalid={proteinInvalid}
+                      aria-describedby={
+                        proteinInvalid
+                          ? 'protein-editor-help protein-editor-error'
+                          : 'protein-editor-help'
+                      }
+                      value={proteinPerServing}
                       onChange={(event) =>
+                        setProteinPerServing(event.target.value)
+                      }
+                      placeholder="z. B. 18"
+                    />
+                    <span>g</span>
+                  </span>
+                </label>
+                <p id="protein-editor-help">
+                  Deine Angabe hat immer Vorrang vor der Schätzung aus Zutaten.
+                  Lass das Feld leer, wenn Mampffred aus den Zutaten rechnen
+                  soll. Alles bleibt auf deinem Gerät.
+                </p>
+                {proteinInvalid && (
+                  <small
+                    id="protein-editor-error"
+                    className="form-error"
+                    role="status"
+                  >
+                    Bitte prüfe den Proteinwert.
+                  </small>
+                )}
+                {proteinPerServing.trim() !== '' && draft.servings > 0 && (
+                  <small>
+                    Das entspricht ca.{' '}
+                    {Math.round(
+                      Number(proteinPerServing || 0) * draft.servings * 10,
+                    ) / 10}{' '}
+                    g für das gesamte Rezept.
+                  </small>
+                )}
+              </details>
+            </details>
+          </section>
+          <section
+            className="wizard-panel"
+            data-editor-stage="1"
+            hidden={editorStage !== 1}
+            aria-labelledby="wizard-stage-1"
+          >
+            <h3 id="wizard-stage-1" tabIndex={-1}>
+              Zutaten
+            </h3>
+            <p className="wizard-intro">
+              Was kommt in dein Rezept? Die Mengen gelten für {draft.servings}{' '}
+              {draft.servings === 1 ? 'Portion' : 'Portionen'}.
+            </p>
+            <fieldset className="ingredient-fieldset">
+              <legend>Zutaten</legend>
+              {draft.ingredients.map((item, index) => (
+                <div className="ingredient-editor" key={item.id ?? index}>
+                  <div className="ingredient-tile-header">
+                    <strong
+                      className="ingredient-number"
+                      aria-label={`Zutat ${index + 1}`}
+                    >
+                      {index + 1}
+                    </strong>
+                    <IconButton
+                      label={`Zutat ${index + 1} entfernen`}
+                      onClick={() => {
+                        if (draft.ingredients.length === 1) {
+                          setDraft({
+                            ...draft,
+                            ingredients: [
+                              {
+                                id: item.id ?? crypto.randomUUID(),
+                                amount: '',
+                                unit: '',
+                                name: '',
+                              },
+                            ],
+                          });
+                          setIngredientAnnouncement('Zutat 1 wurde geleert.');
+                          window.requestAnimationFrame(() =>
+                            foodInputRefs.current[
+                              item.id ?? String(index)
+                            ]?.focus(),
+                          );
+                          return;
+                        }
+                        const focusId =
+                          draft.ingredients[index + 1]?.id ??
+                          draft.ingredients[index - 1]?.id;
                         setDraft({
                           ...draft,
-                          ingredients: draft.ingredients.map(
-                            (entry, itemIndex) =>
-                              itemIndex === index
-                                ? { ...entry, amount: event.target.value }
-                                : entry,
+                          ingredients: draft.ingredients.filter(
+                            (_, itemIndex) => itemIndex !== index,
                           ),
-                        })
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key !== 'Enter') return;
-                        event.preventDefault();
-                        unitRefs.current[item.id ?? String(index)]?.focus();
+                        });
+                        setIngredientAnnouncement(
+                          `Zutat ${index + 1} wurde entfernt.`,
+                        );
+                        window.requestAnimationFrame(() => {
+                          if (focusId) foodInputRefs.current[focusId]?.focus();
+                        });
                       }}
-                      placeholder="z. B. 250"
-                    />
-                  </label>
-                  <div className="unit-field">
-                    <span>Einheit</span>
-                    <UnitPicker
-                      buttonRef={(node) => {
-                        unitRefs.current[item.id ?? String(index)] = node;
-                      }}
-                      label={`Einheit für Zutat ${index + 1}`}
-                      value={item.unit}
-                      onChange={(unit) =>
-                        setDraft({
-                          ...draft,
-                          ingredients: draft.ingredients.map(
-                            (entry, itemIndex) =>
-                              itemIndex === index ? { ...entry, unit } : entry,
-                          ),
-                        })
-                      }
-                    />
+                    >
+                      <Trash2 size={16} />
+                    </IconButton>
                   </div>
+                  <div className="ingredient-tile-fields">
+                    <div
+                      className="ingredient-column-labels"
+                      aria-hidden="true"
+                    >
+                      <span>Zutat</span>
+                      <span>Menge</span>
+                      <span>Einheit</span>
+                    </div>
+                    <IngredientCombobox
+                      ingredient={item}
+                      error={index === 0 ? ingredientsError : undefined}
+                      index={index}
+                      customFoods={customFoods}
+                      onChange={(ingredient) => {
+                        setDraft({
+                          ...draft,
+                          ingredients: draft.ingredients.map(
+                            (entry, itemIndex) =>
+                              itemIndex === index ? ingredient : entry,
+                          ),
+                        });
+                        if (
+                          ingredient.foodLink?.foodId !== item.foodLink?.foodId
+                        )
+                          setDraftFoodOverrides((current) => {
+                            const next = { ...current };
+                            delete next[
+                              ingredientOverrideKey(
+                                draft.id ?? 'preview',
+                                item.id ?? `ingredient-${index}`,
+                              )
+                            ];
+                            return next;
+                          });
+                      }}
+                      onSelected={() =>
+                        amountRefs.current[item.id ?? String(index)]?.focus()
+                      }
+                      onCreateCustom={(name) =>
+                        setCustomFoodTarget({
+                          ingredientId: item.id ?? String(index),
+                          name,
+                        })
+                      }
+                      registerInput={(node) => {
+                        foodInputRefs.current[item.id ?? String(index)] = node;
+                      }}
+                    />
+                    <label>
+                      <span className="sr-only">Menge</span>
+                      <input
+                        ref={(node) => {
+                          amountRefs.current[item.id ?? String(index)] = node;
+                        }}
+                        aria-label={`Menge für Zutat ${index + 1}`}
+                        inputMode="decimal"
+                        value={item.amount}
+                        maxLength={100}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            ingredients: draft.ingredients.map(
+                              (entry, itemIndex) =>
+                                itemIndex === index
+                                  ? { ...entry, amount: event.target.value }
+                                  : entry,
+                            ),
+                          })
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter') return;
+                          event.preventDefault();
+                          unitRefs.current[item.id ?? String(index)]?.focus();
+                        }}
+                        placeholder="250"
+                      />
+                    </label>
+                    <div className="unit-field">
+                      <span className="sr-only">Einheit</span>
+                      <UnitPicker
+                        emptyLabel="Ohne"
+                        buttonRef={(node) => {
+                          unitRefs.current[item.id ?? String(index)] = node;
+                        }}
+                        label={`Einheit für Zutat ${index + 1}`}
+                        value={item.unit}
+                        onChange={(unit) =>
+                          setDraft({
+                            ...draft,
+                            ingredients: draft.ingredients.map(
+                              (entry, itemIndex) =>
+                                itemIndex === index
+                                  ? { ...entry, unit }
+                                  : entry,
+                            ),
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                  {index === 0 && ingredientsError && (
+                    <small
+                      id="recipe-ingredients-error"
+                      className="field-validation-error"
+                      role="alert"
+                    >
+                      {ingredientsError}
+                    </small>
+                  )}
                 </div>
-              </div>
-            ))}
-            <button
-              type="button"
-              className="inline-add"
-              onClick={addIngredientAndFocus}
-            >
-              <Plus size={16} /> Zutat hinzufügen
-            </button>
-            <span className="sr-only" aria-live="polite">
-              {ingredientAnnouncement}
-            </span>
-          </fieldset>
-          <fieldset>
-            <legend>Schritte</legend>
-            {draft.steps.length > 1 && (
-              <p className="step-reorder-hint">
-                Am Griff ziehen, um die Reihenfolge zu ändern.
-              </p>
-            )}
-            {draft.steps.map((step, index) => (
-              <div
-                className={`step-editor ${draggedStep === index ? 'is-dragging' : ''}`}
-                data-step-index={index}
-                key={index}
-                onDragOver={(event) => {
-                  if (draggedStepRef.current === undefined) return;
-                  event.preventDefault();
-                  moveStep(draggedStepRef.current, index);
-                }}
+              ))}
+              <button
+                type="button"
+                className="inline-add"
+                onClick={addIngredientAndFocus}
               >
+                <Plus size={16} /> Zutat hinzufügen
+              </button>
+              <span className="sr-only" aria-live="polite">
+                {ingredientAnnouncement}
+              </span>
+            </fieldset>
+            <aside className="wizard-tip">
+              <Info size={20} />
+              <div>
+                <strong>Tipp</strong>
+                <p>
+                  Gib Mengen so an, wie du sie beim Kochen verwendest – zum
+                  Beispiel in g, ml oder Stück.
+                </p>
+              </div>
+            </aside>
+          </section>
+          <section
+            className="wizard-panel"
+            data-editor-stage="2"
+            hidden={editorStage !== 2}
+            aria-labelledby="wizard-stage-2"
+          >
+            <h3 id="wizard-stage-2" tabIndex={-1}>
+              Zubereitung
+            </h3>
+            <RecipeStepsEditor
+              initialSteps={draft.steps}
+              onChange={(steps) =>
+                setDraft((current) => ({ ...current, steps }))
+              }
+            />
+            <details className="wizard-management">
+              <summary>
+                Rezept verwalten
+                <ChevronDown size={16} />
+              </summary>
+              {hasDraftContent && (
                 <button
                   type="button"
-                  className="step-drag-handle"
-                  draggable
-                  aria-label={`Schritt ${index + 1} verschieben. Mit Pfeil hoch oder runter neu anordnen.`}
-                  onDragStart={(event) => {
-                    draggedStepRef.current = index;
-                    setDraggedStep(index);
-                    event.dataTransfer.effectAllowed = 'move';
-                    event.dataTransfer.setData('text/plain', String(index));
-                  }}
-                  onDragEnd={finishStepDrag}
-                  onPointerDown={(event) => {
-                    if (event.pointerType === 'mouse') return;
-                    draggedStepRef.current = index;
-                    setDraggedStep(index);
-                    event.currentTarget.setPointerCapture(event.pointerId);
-                  }}
-                  onPointerMove={(event) => {
-                    if (
-                      event.pointerType === 'mouse' ||
-                      draggedStepRef.current === undefined
-                    )
-                      return;
-                    const rows = Array.from(
-                      event.currentTarget
-                        .closest('fieldset')
-                        ?.querySelectorAll<HTMLElement>('[data-step-index]') ??
-                        [],
-                    );
-                    const target = rows.find((row) => {
-                      const bounds = row.getBoundingClientRect();
-                      return (
-                        event.clientY >= bounds.top &&
-                        event.clientY <= bounds.bottom
-                      );
-                    });
-                    const targetIndex = Number(target?.dataset.stepIndex);
-                    if (Number.isInteger(targetIndex))
-                      moveStep(draggedStepRef.current, targetIndex);
-                  }}
-                  onPointerUp={finishStepDrag}
-                  onPointerCancel={finishStepDrag}
-                  onKeyDown={(event) => {
-                    if (event.key === 'ArrowUp' && index > 0) {
-                      event.preventDefault();
-                      const fieldset = event.currentTarget.closest('fieldset');
-                      moveStep(index, index - 1);
-                      finishStepDrag();
-                      window.requestAnimationFrame(() =>
-                        fieldset
-                          ?.querySelector<HTMLButtonElement>(
-                            `[data-step-index="${index - 1}"] .step-drag-handle`,
-                          )
-                          ?.focus(),
-                      );
-                    }
-                    if (
-                      event.key === 'ArrowDown' &&
-                      index < draft.steps.length - 1
-                    ) {
-                      event.preventDefault();
-                      const fieldset = event.currentTarget.closest('fieldset');
-                      moveStep(index, index + 1);
-                      finishStepDrag();
-                      window.requestAnimationFrame(() =>
-                        fieldset
-                          ?.querySelector<HTMLButtonElement>(
-                            `[data-step-index="${index + 1}"] .step-drag-handle`,
-                          )
-                          ?.focus(),
-                      );
-                    }
-                  }}
+                  className="danger-button"
+                  onClick={() => setDiscardOpen(true)}
                 >
-                  <GripVertical size={19} />
+                  <Trash2 size={17} />
+                  {recipe ? 'Änderungen verwerfen' : 'Entwurf verwerfen'}
                 </button>
-                <span>{index + 1}</span>
-                <textarea
-                  value={step}
-                  maxLength={5000}
-                  onChange={(event) =>
-                    setDraft({
-                      ...draft,
-                      steps: draft.steps.map((entry, stepIndex) =>
-                        stepIndex === index ? event.target.value : entry,
-                      ),
-                    })
-                  }
-                  placeholder="Zubereitungsschritt"
-                />
-                <IconButton
-                  label={`Schritt ${index + 1} entfernen`}
-                  onClick={() =>
-                    setDraft({
-                      ...draft,
-                      steps: draft.steps.filter(
-                        (_, stepIndex) => stepIndex !== index,
-                      ),
-                    })
-                  }
+              )}
+              {onDelete && (
+                <button
+                  type="button"
+                  className="danger-button"
+                  onClick={onDelete}
                 >
-                  <Trash2 size={16} />
-                </IconButton>
-              </div>
-            ))}
+                  <Trash2 size={17} /> Rezept löschen
+                </button>
+              )}
+            </details>
+          </section>
+          <footer className="wizard-footer">
             <button
               type="button"
-              className="inline-add"
-              onClick={() =>
-                setDraft({ ...draft, steps: [...draft.steps, ''] })
-              }
-            >
-              <Plus size={16} /> Schritt hinzufügen
-            </button>
-          </fieldset>
-          <button className="primary-button" disabled={!canSave || saveBusy}>
-            {saveBusy ? 'Rezept wird gespeichert …' : 'Rezept speichern'}
-          </button>
-          {hasDraftContent && (
-            <button
-              type="button"
-              className="danger-button"
+              className="wizard-back"
+              disabled={saveBusy}
               onClick={() => {
-                if (
-                  !window.confirm(
-                    recipe
-                      ? 'Gespeicherte Änderungen an diesem Rezept verwerfen?'
-                      : 'Diesen Rezeptentwurf wirklich verwerfen?',
-                  )
-                )
-                  return;
-                editorStopped.current = true;
-                imageSelection.current += 1;
-                void onDiscardDraft(draft.id ?? '')
-                  .then(onClose)
-                  .catch(() => {
-                    editorStopped.current = false;
-                    setSaveError(
-                      'Der Entwurf konnte nicht verworfen werden. Bitte erneut versuchen.',
-                    );
-                  });
+                if (editorStage === 0) void requestClose();
+                else {
+                  setSaveError('');
+                  showStage(editorStage - 1);
+                }
               }}
             >
-              <Trash2 size={17} />
-              {recipe ? 'Änderungen verwerfen' : 'Entwurf verwerfen'}
+              <ChevronLeft size={18} />
+              Zurück
             </button>
-          )}
-          {onDelete && (
-            <button type="button" className="danger-button" onClick={onDelete}>
-              <Trash2 size={17} /> Rezept löschen
+            <button
+              type="submit"
+              className="primary-button"
+              disabled={saveBusy || framingOpen}
+            >
+              {saveBusy ? (
+                'Speichert …'
+              ) : editorStage === 2 ? (
+                <>
+                  <Check size={19} />
+                  Rezept speichern
+                </>
+              ) : (
+                <>
+                  Weiter
+                  <ChevronRight size={19} />
+                </>
+              )}
             </button>
-          )}
+            <button
+              type="button"
+              className="wizard-save-draft"
+              disabled={saveBusy || !hasDraftContent}
+              onClick={() => void requestClose()}
+            >
+              <Save size={18} /> Als Entwurf speichern
+            </button>
+          </footer>
         </form>
       </div>
+      {discardOpen && (
+        <DiscardDraftDialog
+          name={
+            draft.name.trim() ||
+            draft.ingredients.find((item) => item.name.trim())?.name ||
+            'Neues Rezept'
+          }
+          existingRecipe={Boolean(recipe)}
+          onCancel={() => setDiscardOpen(false)}
+          onConfirm={async () => {
+            editorStopped.current = true;
+            imageSelection.current += 1;
+            setSaveBusy(true);
+            try {
+              await onDiscardDraft(draft.id ?? '');
+              onClose();
+            } catch (error) {
+              editorStopped.current = false;
+              setSaveBusy(false);
+              throw error;
+            }
+          }}
+        />
+      )}
+      {displayedImage && framingOpen && (
+        <RecipeImageSheet
+          src={displayedImage}
+          initialFrame={draft.imageFrame}
+          onCancel={() => setFramingOpen(false)}
+          onApply={(imageFrame) => {
+            setDraft((current) => ({ ...current, imageFrame }));
+            setFramingOpen(false);
+          }}
+        />
+      )}
       {foodPicker && (
         <FoodMappingSheet
           ingredientName={foodPicker.name}
@@ -7581,6 +7982,10 @@ export default function MampffredApp() {
                   setSelectedRecipeId(recipe.id);
                 }}
                 onDraft={(draft) => setEditorRecipeId(`draft:${draft.id}`)}
+                onDiscardDraft={async (id) => {
+                  await discardRecipeDraft(id);
+                  showToast('Entwurf verworfen.');
+                }}
                 onAdd={openNewRecipeEditor}
                 onAddSamples={addSampleRecipes}
                 onToggleFavorite={(recipe) =>

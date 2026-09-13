@@ -5,7 +5,21 @@ import '@/app/globals.css';
 
 const root = document.getElementById('root')!;
 
-if (window.self !== window.top) {
+function isLocalMobilePreview() {
+  if (!import.meta.env.DEV) return false;
+  try {
+    return (
+      ['127.0.0.1', 'localhost', '[::1]'].includes(window.location.hostname) &&
+      window.parent === window.top &&
+      window.parent.location.origin === window.location.origin &&
+      window.parent.location.pathname === '/mobile-preview.html'
+    );
+  } catch {
+    return false;
+  }
+}
+
+if (window.self !== window.top && !isLocalMobilePreview()) {
   const warning = document.createElement('p');
   warning.className = 'embedding-warning';
   warning.textContent =

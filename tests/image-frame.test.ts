@@ -4,7 +4,59 @@ import {
   defaultImageFrame,
   panImageFrame,
   validateImageFrame,
+  zoomImageFrame,
 } from '../lib/image-frame.ts';
+
+test('pinch zoom keeps the image point under the moving midpoint', () => {
+  const result = zoomImageFrame(
+    { x: 0.5, y: 0.5, zoom: 1 },
+    2,
+    { x: 100, y: 75 },
+    { x: 120, y: 90 },
+    400,
+    300,
+    400,
+    300,
+  );
+  assert.deepEqual(result, { zoom: 2, x: 0.2, y: 0.2 });
+  // Image coordinate (100, 75) now appears exactly at the new midpoint.
+  assert.equal(100 * result.zoom - 400 * result.x, 120);
+  assert.equal(75 * result.zoom - 300 * result.y, 90);
+});
+
+test('zoom clamps portrait and landscape images to filled crop boundaries', () => {
+  for (const [iw, ih] of [
+    [300, 900],
+    [900, 300],
+  ]) {
+    for (const zoom of [0.01, 1, 2, 100]) {
+      const result = zoomImageFrame(
+        { x: 0, y: 1, zoom: 2 },
+        zoom,
+        { x: 0, y: 0 },
+        { x: 999, y: -999 },
+        iw,
+        ih,
+        384,
+        288,
+      );
+      assert.doesNotThrow(() => validateImageFrame(result));
+    }
+  }
+  assert.deepEqual(
+    zoomImageFrame(
+      defaultImageFrame,
+      2,
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+      0,
+      0,
+      384,
+      288,
+    ),
+    defaultImageFrame,
+  );
+});
 import {
   createEmptyData,
   createSampleRecipes,

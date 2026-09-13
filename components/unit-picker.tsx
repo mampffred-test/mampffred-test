@@ -30,7 +30,9 @@ export function UnitPicker({
   label,
   onChange,
   buttonRef,
+  emptyLabel = 'Ohne Einheit',
 }: {
+  emptyLabel?: string;
   value: string;
   label: string;
   onChange: (value: string) => void;
@@ -116,7 +118,7 @@ export function UnitPicker({
         aria-controls={open ? id : undefined}
         onClick={() => setOpen(!open)}
       >
-        <span>{value || 'Ohne Einheit'}</span>
+        <span>{value || emptyLabel}</span>
         <ChevronDown size={16} />
       </button>
       {open &&

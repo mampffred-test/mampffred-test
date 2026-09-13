@@ -37,7 +37,11 @@ test('legt erst nach einer inhaltlichen Eingabe einen Entwurf an', () => {
 });
 
 test('aktualisiert genau einen Entwurf und kann ihn wieder entfernen', () => {
-  const updated = { ...emptyDraft, name: 'Curry', updatedAt: '2026-09-03T11:00:00.000Z' };
+  const updated = {
+    ...emptyDraft,
+    name: 'Curry',
+    updatedAt: '2026-09-03T11:00:00.000Z',
+  };
   assert.deepEqual(upsertRecipeDraft([emptyDraft], updated), [updated]);
   assert.deepEqual(removeRecipeDraft([updated], 'draft-1'), []);
 });
@@ -66,4 +70,39 @@ test('ersetzt nur Korrekturen des fertigen Rezepts und erhält neuere fremde Wer
     kind: 'whole-ingredient',
     nutrients: { proteinG: 3 },
   });
+});
+
+test('bewahrt unvollständige Entwürfe ohne Namen und vollständige Zutaten auf', () => {
+  for (const partial of [
+    { description: 'Idee für später' },
+    { steps: ['Gemüse anbraten.'] },
+    { ingredients: [{ ...emptyDraft.ingredients[0], amount: '250' }] },
+    { ingredients: [{ ...emptyDraft.ingredients[0], unit: 'g' }] },
+    { servings: 4 },
+    { minutes: 45 },
+    { tags: ['Vegetarisch'] },
+    { imageKey: 'draft-photo' },
+  ]) {
+    const draft = { ...emptyDraft, ...partial };
+    assert.equal(
+      hasMeaningfulRecipeDraft(draft),
+      true,
+      JSON.stringify(partial),
+    );
+    assert.deepEqual(upsertRecipeDraft([], draft), [draft]);
+    assert.equal(draft.name, '');
+  }
+});
+
+test('legt für unveränderte Standardwerte oder Leerzeichen keinen leeren Entwurf an', () => {
+  assert.equal(
+    hasMeaningfulRecipeDraft({
+      ...emptyDraft,
+      name: '  ',
+      description: '\n',
+      steps: ['  '],
+      ingredients: [{ ...emptyDraft.ingredients[0], amount: ' ', unit: ' ' }],
+    }),
+    false,
+  );
 });

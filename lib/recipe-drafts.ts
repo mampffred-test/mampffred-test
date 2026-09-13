@@ -1,17 +1,22 @@
 import { ingredientOverrideKey } from './food-nutrition.ts';
-import type {
-  FoodOverride,
-  RecipeDraft,
-  RecipeIngredient,
-} from './model.ts';
+import type { FoodOverride, RecipeDraft, RecipeIngredient } from './model.ts';
 
 export function hasMeaningfulRecipeDraft(draft: RecipeDraft) {
   return Boolean(
     draft.name.trim() ||
-      draft.description.trim() ||
-      draft.ingredients.some((ingredient) => ingredient.name.trim()) ||
-      draft.steps.some((step) => step.trim()) ||
-      draft.imageKey,
+    draft.description.trim() ||
+    draft.ingredients.some(
+      (ingredient) =>
+        ingredient.name.trim() ||
+        ingredient.amount.trim() ||
+        ingredient.unit.trim(),
+    ) ||
+    draft.steps.some((step) => step.trim()) ||
+    draft.imageKey ||
+    draft.tags.length > 0 ||
+    draft.servings !== 2 ||
+    draft.minutes !== 30 ||
+    Object.keys(draft.nutrition?.wholeRecipe ?? {}).length > 0,
   );
 }
 
@@ -21,7 +26,9 @@ export function upsertRecipeDraft(
 ) {
   const existingIndex = drafts.findIndex((entry) => entry.id === draft.id);
   if (existingIndex < 0) return [draft, ...drafts];
-  return drafts.map((entry, index) => (index === existingIndex ? draft : entry));
+  return drafts.map((entry, index) =>
+    index === existingIndex ? draft : entry,
+  );
 }
 
 export function removeRecipeDraft(
@@ -40,10 +47,7 @@ export function replaceRecipeFoodOverrides(
 ) {
   const recipeKeys = new Set(
     [...previousIngredients, ...nextIngredients].map((ingredient, index) =>
-      ingredientOverrideKey(
-        recipeId,
-        ingredient.id ?? `ingredient-${index}`,
-      ),
+      ingredientOverrideKey(recipeId, ingredient.id ?? `ingredient-${index}`),
     ),
   );
   return {

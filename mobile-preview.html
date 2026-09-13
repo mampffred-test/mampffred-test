@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mampffred – Galaxy S25+ Vorschau</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 16px; background: #e8e6e1; color: #30392f; font: 14px system-ui, sans-serif; }
+      main { width: 384px; margin: 0 auto; }
+      p { margin: 0 0 12px; text-align: center; }
+      iframe { display: block; width: 384px; height: 832px; border: 0; background: white; box-shadow: 0 4px 24px #0002; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p>Galaxy S25+ · 384 × 832</p>
+      <iframe src="./" title="Mampffred – mobile App" allow="clipboard-write; web-share"></iframe>
+    </main>
+    <script>
+      // Optional full-length capture of the actual editor, with current values.
+      // The normal mobile preview keeps its fixed 384 × 832 viewport.
+      if (new URLSearchParams(location.search).has('captureEditor')) {
+        const trigger = document.createElement('button');
+        trigger.textContent = 'Gesamte Editoransicht aufnehmen';
+        document.body.prepend(trigger);
+        trigger.onclick = () => {
+          const frame = document.querySelector('iframe');
+          const doc = frame.contentDocument;
+          const editor = doc.querySelector('.editor-modal');
+          if (!editor) { trigger.textContent = 'Bitte zuerst Rezept bearbeiten öffnen'; return; }
+          doc.querySelectorAll('style, link[rel="stylesheet"]').forEach(style => document.head.append(style.cloneNode(true)));
+          const copy = editor.cloneNode(true);
+          const originals = editor.querySelectorAll('input, textarea, select');
+          copy.querySelectorAll('input, textarea, select').forEach((field, i) => {
+            field.value = originals[i].value;
+            if (field instanceof HTMLInputElement) field.checked = originals[i].checked;
+          });
+          copy.id = 'captured-recipe-editor';
+          copy.removeAttribute('inert'); copy.removeAttribute('aria-hidden');
+          copy.querySelectorAll('textarea').forEach(field => field.style.height = `${Math.max(112, field.style.height ? parseFloat(field.style.height) : 112)}px`);
+          const style = document.createElement('style');
+          style.textContent = 'html,body { margin:0!important; padding:0!important; height:auto!important; min-height:0!important; overflow:visible!important; background:#f7f4e9!important; } body>main, body>button { display:none!important; } #captured-recipe-editor { width:384px!important; max-height:none!important; height:auto!important; overflow:visible!important; margin:0!important; border-radius:0!important; box-shadow:none!important; animation:none!important; } #captured-recipe-editor>.modal-header { position:static!important; }';
+          document.head.append(style); document.body.append(copy);
+          copy.querySelectorAll('textarea').forEach(field => { field.style.height='auto'; field.style.height=`${Math.max(112,field.scrollHeight+2)}px`; });
+        };
+      }
+    </script>
+  </body>
+</html>
