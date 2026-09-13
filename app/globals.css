@@ -3297,38 +3297,95 @@ select:focus-visible {
 .app-loading img {
   object-fit: contain;
 }
-.toast {
+.toast-stack {
   position: fixed;
-  z-index: 50;
+  z-index: 90;
   left: 50%;
-  bottom: 30px;
+  bottom: calc(
+    var(--bottom-nav-offset, 76px) + env(safe-area-inset-bottom) + 12px
+  );
   transform: translateX(-50%);
-  display: flex;
-  align-items: center;
+  width: min(400px, calc(100% - 24px));
+  display: grid;
   gap: 8px;
-  max-width: calc(100% - 30px);
-  border-radius: 999px;
-  padding: 11px 16px;
-  background: #17301a;
-  color: #fff;
-  box-shadow: var(--shadow);
-  font-size: 0.76rem;
-  font-weight: 650;
+  pointer-events: none;
+}
+.toast {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 4px 8px;
+  border: 1px solid #526448;
+  border-radius: 20px;
+  padding: 10px;
+  background: linear-gradient(135deg, #29452c, #192f20);
+  color: #fffdf4;
+  box-shadow:
+    0 12px 32px rgb(22 43 24 / 22%),
+    0 2px 5px rgb(22 43 24 / 12%);
+  pointer-events: auto;
+}
+.toast-symbol {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #dcebbb;
+  color: #29452c;
+}
+.toast-copy {
+  min-width: 0;
+}
+.toast-copy strong {
+  display: block;
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+.toast-copy small {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.73rem;
+  line-height: 1.4;
+  color: #dce4d4;
 }
 .toast button {
-  min-height: 34px;
-  margin: -5px -8px -5px 2px;
-  padding: 0 9px;
+  min-height: 44px;
   border: 0;
-  border-radius: 999px;
-  background: rgb(255 255 255 / 16%);
-  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 12px;
+  font-size: 0.82rem;
   font-weight: 750;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+}
+.toast-dismiss {
+  width: 44px;
+  padding: 0;
+  background: transparent;
+  color: #e8efdf;
+}
+.toast-dismiss:hover {
+  background: rgb(255 255 255 / 12%);
+}
+.toast-undo {
+  grid-column: 2 / 4;
+  padding: 0 14px;
+  background: #dcebbb;
+  color: #243d23;
+}
+.toast button:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 .toast.error {
-  background: #7b3028;
+  background: #67352f;
+  border-color: #93635a;
+}
+.toast.error .toast-symbol {
+  background: #f7ded5;
+  color: #67352f;
 }
 
 /* Cohesive mobile-first redesign shared by the primary flows. */
@@ -5046,9 +5103,6 @@ select:focus-visible {
     border-radius: 26px 26px 0 0;
     padding-bottom: max(22px, calc(env(safe-area-inset-bottom) + 12px));
   }
-  .toast {
-    bottom: calc(var(--bottom-nav-offset) + env(safe-area-inset-bottom) + 12px);
-  }
 }
 @media (max-width: 380px) {
   .screen-content {
@@ -5285,11 +5339,11 @@ select:focus-visible {
   @keyframes toast-in {
     from {
       opacity: 0;
-      transform: translate3d(-50%, 12px, 0) scale(0.96);
+      transform: translate3d(0, 12px, 0) scale(0.96);
     }
     to {
       opacity: 1;
-      transform: translate3d(-50%, 0, 0) scale(1);
+      transform: translate3d(0, 0, 0) scale(1);
     }
   }
   @keyframes status-enter {
@@ -6570,4 +6624,19 @@ select:focus-visible {
   border: 0;
   border-radius: 12px;
   font-weight: 700;
+}
+
+.app-version {
+  display: block;
+  font-size: 1.08rem;
+  margin-bottom: 10px;
+}
+.app-update-status {
+  display: block;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.maintenance-section .app-update-checked {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
 }

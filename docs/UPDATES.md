@@ -14,7 +14,7 @@ Im bisherigen Code waren folgende Lücken nachweisbar:
 
 ## Verbindlicher Update-Ablauf
 
-1. Jeder Build erhält eine aus den ausgelieferten Quell- und Asset-Inhalten abgeleitete Kennung. App, Service Worker und version.json tragen dieselbe Kennung.
+1. Die sichtbare Versionsnummer (z. B. 0.1.1) stammt aus package.json und wird bei Veröffentlichungen erhöht; package-lock.json wird dabei mitgeführt. Zusätzlich erhält jeder Build eine aus den ausgelieferten Quell- und Asset-Inhalten abgeleitete Kennung. App, Service Worker und version.json tragen dieselbe Kennung. Die technische Update-Erkennung vergleicht weiterhin diese Kennung, damit auch Änderungen innerhalb derselben Versionsnummer erkannt werden. Unter **Installationsadresse** bleibt sie für die Diagnose sichtbar.
 2. Die App prüft beim Start, bei Rückkehr in den Vordergrund und regelmäßig während der Nutzung auf Updates. Zusätzlich gibt es unter **Mehr → App & Updates** den Button **Nach Updates suchen**.
 3. Die neue Version lädt zunächst ihre vollständige Offline-Ausstattung. Cache- und HTTP-Wiederverwendung darf dabei keine alte Ausstattung als neue Installation ausgeben.
 4. Ein vorbereitetes Update wird angezeigt. Die App lädt erst nach **Jetzt aktualisieren** neu; zuvor werden ihre ausstehenden Schreibaufträge abgewartet. Im Rezepteditor wird der globale Neustart-Button nicht angeboten.

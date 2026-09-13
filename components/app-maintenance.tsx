@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { useState } from 'react';
 import { Download, RefreshCw, Trash2 } from 'lucide-react';
-import { APP_BUILD_ID } from '../lib/app-version.ts';
+import { APP_VERSION, APP_BUILD_ID } from '../lib/app-version.ts';
 import { standardRecipeCount } from '../lib/standard-recipes.ts';
 import type { AppData } from '../lib/model.ts';
 import type { UpdateStatus } from '../lib/app-updates.ts';
@@ -57,11 +57,15 @@ export function AppMaintenance({
         <>
           <h2>Updates & Rezepte</h2>
           <div className="maintenance-card">
-            <strong>Version {APP_BUILD_ID}</strong>
-            <output>
-              {labels[update.status]}{' '}
-              {update.checkedAt ? 'Zuletzt geprüft: ' + update.checkedAt : ''}
+            <strong className="app-version">Version {APP_VERSION}</strong>
+            <output className="app-update-status">
+              {labels[update.status]}
             </output>
+            {update.checkedAt && (
+              <p className="app-update-checked">
+                Zuletzt geprüft: {update.checkedAt} Uhr
+              </p>
+            )}
             <button
               className="secondary-button"
               disabled={
@@ -115,6 +119,7 @@ export function AppMaintenance({
               {window.location.origin}
               {import.meta.env.BASE_URL}
             </p>
+            <p>Build: {APP_BUILD_ID}</p>
           </details>
         </>
       ) : (

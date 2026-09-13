@@ -40,6 +40,9 @@ function buildIdentity() {
   return hash.digest('hex').slice(0, 12);
 }
 const buildId = buildIdentity();
+const appVersion = (
+  JSON.parse(readFileSync('package.json', 'utf8')) as { version: string }
+).version;
 
 function deploymentBase() {
   if (process.env.VITE_BASE_PATH) return process.env.VITE_BASE_PATH;
@@ -87,14 +90,17 @@ function serviceWorkerPrecache() {
       );
       await writeFile(
         join(outputDirectory, 'version.json'),
-        JSON.stringify({ buildId }),
+        JSON.stringify({ buildId, version: appVersion }),
       );
     },
   };
 }
 
 export default defineConfig({
-  define: { __APP_BUILD_ID__: JSON.stringify(buildId) },
+  define: {
+    __APP_BUILD_ID__: JSON.stringify(buildId),
+    __APP_VERSION__: JSON.stringify(appVersion),
+  },
   base: deploymentBase(),
   plugins: [react(), serviceWorkerPrecache()],
   resolve: {

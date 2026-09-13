@@ -6,7 +6,14 @@ import { UnitPicker } from './unit-picker';
 import { RecipeStepsEditor } from './recipe-steps-editor';
 import { useAppUpdate } from './use-app-update';
 import { AppMaintenance, type AppUpdateControls } from './app-maintenance';
-import { APP_BUILD_ID } from '@/lib/app-version';
+import { APP_VERSION } from '@/lib/app-version';
+import { AppToast } from './app-toast';
+import {
+  removeRecipe,
+  restoreRecipes,
+  removedRecipeImageKeys,
+  type RemovedRecipe,
+} from '@/lib/recipe-undo';
 import { scaledIngredientAmount } from '@/lib/ingredient-amount';
 import {
   installStandardRecipes,
@@ -2059,7 +2066,7 @@ function MoreView({
         {
           panel: 'app',
           label: 'App & Updates',
-          detail: `Version ${APP_BUILD_ID}`,
+          detail: `Version ${APP_VERSION}`,
           icon: <Settings size={20} />,
         },
       ],
@@ -5433,7 +5440,7 @@ function SettingsView({
               <div>
                 <ShieldCheck />
                 <span>Version</span>
-                <strong>{APP_BUILD_ID}</strong>
+                <strong>{APP_VERSION}</strong>
               </div>
             </div>
             <p className="privacy-note">
@@ -6192,12 +6199,7 @@ type LoadState = 'loading' | 'ready' | 'error';
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 type WriterState = 'checking' | 'ready' | 'blocked' | 'unsupported' | 'error';
 type PendingDeletion = {
-  recipe: Recipe;
-  recipeIndex: number;
-  meals: Array<{
-    date: string;
-    meal: AppData['plan'][number]['meals'][number];
-  }>;
+  removed: RemovedRecipe[];
   cleanupTimer?: number;
 };
 type PendingShoppingDeletion = {
@@ -6253,6 +6255,9 @@ export default function MampffredApp() {
   const [deleteRequest, setDeleteRequest] = useState<Recipe>();
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [pendingDeletion, setPendingDeletion] = useState<PendingDeletion>();
+  const pendingDeletionRef = useRef<PendingDeletion | undefined>(undefined);
+  const recipeDeletionBusy = useRef(false);
+  const [undoBusy, setUndoBusy] = useState(false);
   const [pendingShoppingDeletion, setPendingShoppingDeletion] =
     useState<PendingShoppingDeletion>();
   const [planner, setPlanner] = useState<PlannerState>();
@@ -6868,7 +6873,7 @@ export default function MampffredApp() {
   );
   function showToast(
     message: string,
-    duration = 2800,
+    duration = 4500,
     tone: ToastState['tone'] = 'success',
   ) {
     setToast({ message, tone });
@@ -7573,111 +7578,89 @@ export default function MampffredApp() {
       showToast('Rezept gespeichert.');
     }
   }
-  async function confirmDeleteRecipe() {
-    const recipe = deleteRequest;
-    const data = dataRef.current;
-    if (!recipe) return;
-    if (pendingDeletion) {
-      setDeleteRequest(undefined);
-      return;
+  function pauseRecipeDeletionTimer() {
+    const timer = pendingDeletionRef.current?.cleanupTimer;
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      deletionTimers.current.delete(timer);
     }
+  }
+  function finishRecipeDeletion() {
+    if (recipeDeletionBusy.current) return;
+    pauseRecipeDeletionTimer();
+    pendingDeletionRef.current = undefined;
+    setPendingDeletion(undefined);
+    retainedImages.current = [];
+    // Storage cleanup also revokes unused image URLs after the save succeeds.
+    void persistCurrent().catch(() => undefined);
+  }
+  function offerRecipeUndo(removed: RemovedRecipe[]) {
+    pauseRecipeDeletionTimer();
+    const cleanupTimer = window.setTimeout(finishRecipeDeletion, 10_000);
+    deletionTimers.current.add(cleanupTimer);
+    const pending = { removed, cleanupTimer };
+    pendingDeletionRef.current = pending;
+    setPendingDeletion(pending);
+    retainedImages.current = removedRecipeImageKeys(removed);
+  }
+  async function confirmDeleteRecipe() {
+    if (!deleteRequest || recipeDeletionBusy.current) return;
+    const deletion = removeRecipe(dataRef.current, deleteRequest.id);
+    if (!deletion) return;
+    recipeDeletionBusy.current = true;
     setDeleteBusy(true);
-    const deletion: PendingDeletion = {
-      recipe,
-      recipeIndex: data.recipes.findIndex((item) => item.id === recipe.id),
-      meals: data.plan.flatMap((day) =>
-        day.meals
-          .filter((meal) => meal.recipeId === recipe.id)
-          .map((meal) => ({ date: day.date, meal })),
-      ),
-    };
-    const nextData: AppData = {
-      ...data,
-      recipes: data.recipes.filter((item) => item.id !== recipe.id),
-      recipeDrafts: data.recipeDrafts.filter(
-        (draft) => draft.id !== recipe.id && draft.baseRecipeId !== recipe.id,
-      ),
-      plan: data.plan.map((day) => ({
-        ...day,
-        meals: day.meals.filter((meal) => meal.recipeId !== recipe.id),
-      })),
-    };
+    setUndoBusy(true);
+    pauseRecipeDeletionTimer();
+    const previous = pendingDeletionRef.current?.removed ?? [];
+    const removed = [...previous, deletion.removed];
+    retainedImages.current = removedRecipeImageKeys(removed);
     try {
-      retainedImages.current = recipe.imageKey ? [recipe.imageKey] : [];
-      await commitData(nextData);
+      await commitData(deletion.next);
       setDeleteRequest(undefined);
-      setDeleteBusy(false);
       setEditorRecipeId(undefined);
       setSelectedRecipeId(undefined);
       setToast(undefined);
-      const cleanupTimer = window.setTimeout(() => {
-        deletionTimers.current.delete(cleanupTimer);
-        if (recipe.imageKey) {
-          retainedImages.current = [];
-          void persistCurrent().catch(() => undefined);
-          if (!referencedImageKeys(dataRef.current).has(recipe.imageKey))
-            setImageUrls((current) => {
-              const next = { ...current };
-              const url = next[recipe.imageKey!];
-              if (url) URL.revokeObjectURL(url);
-              delete next[recipe.imageKey!];
-              return next;
-            });
-        }
-        setPendingDeletion((current) =>
-          current?.recipe.id === recipe.id ? undefined : current,
-        );
-      }, 10_000);
-      deletionTimers.current.add(cleanupTimer);
-      setPendingDeletion({ ...deletion, cleanupTimer });
+      offerRecipeUndo(removed);
     } catch {
+      // Keep recovery available even if the optimistic local save failed.
+      offerRecipeUndo(removed);
+      showToast(
+        'Die Löschung konnte nicht auf dem Gerät gespeichert werden.',
+        6000,
+        'error',
+      );
+    } finally {
+      recipeDeletionBusy.current = false;
       setDeleteBusy(false);
-      showToast('Das Rezept konnte nicht gelöscht werden.');
+      setUndoBusy(false);
     }
   }
   async function undoDeleteRecipe() {
-    const deletion = pendingDeletion;
-    if (!deletion) return;
-    const data = dataRef.current;
-    const recipes = [...data.recipes];
-    if (!recipes.some((recipe) => recipe.id === deletion.recipe.id))
-      recipes.splice(
-        Math.min(Math.max(deletion.recipeIndex, 0), recipes.length),
-        0,
-        deletion.recipe,
-      );
-    const nextData: AppData = {
-      ...data,
-      recipes,
-      plan: data.plan.map((day) => {
-        const restored = deletion.meals.filter(
-          (entry) => entry.date === day.date,
-        );
-        return {
-          ...day,
-          meals: [
-            ...day.meals,
-            ...restored
-              .filter(
-                (entry) =>
-                  !day.meals.some((meal) => meal.slot === entry.meal.slot),
-              )
-              .map((entry) => entry.meal),
-          ],
-        };
-      }),
-    };
+    const deletion = pendingDeletionRef.current;
+    if (!deletion || recipeDeletionBusy.current) return;
+    recipeDeletionBusy.current = true;
+    setUndoBusy(true);
+    pauseRecipeDeletionTimer();
     try {
-      await commitData(nextData);
-      if (deletion.cleanupTimer) {
-        window.clearTimeout(deletion.cleanupTimer);
-        deletionTimers.current.delete(deletion.cleanupTimer);
-      }
-      retainedImages.current = [];
+      await commitData((current) => restoreRecipes(current, deletion.removed));
+      pendingDeletionRef.current = undefined;
       setPendingDeletion(undefined);
-      showToast('Rezept wiederhergestellt.');
+      retainedImages.current = [];
+      showToast(
+        deletion.removed.length === 1
+          ? 'Rezept wiederhergestellt.'
+          : `${deletion.removed.length} Rezepte wiederhergestellt.`,
+      );
     } catch {
-      showToast('Rückgängig machen ist fehlgeschlagen.');
+      offerRecipeUndo(deletion.removed);
+      showToast(
+        'Rückgängig machen ist fehlgeschlagen. Bitte erneut versuchen.',
+        6000,
+        'error',
+      );
+    } finally {
+      recipeDeletionBusy.current = false;
+      setUndoBusy(false);
     }
   }
   async function createBackup(password: string) {
@@ -7806,6 +7789,7 @@ export default function MampffredApp() {
     await queueReplaceAllData(payload.data, restoredBlobs);
     for (const timer of deletionTimers.current) window.clearTimeout(timer);
     deletionTimers.current.clear();
+    pendingDeletionRef.current = undefined;
     setPendingDeletion(undefined);
     setPendingShoppingDeletion(undefined);
     const restoredUrls: Record<string, string> = {};
@@ -8408,39 +8392,53 @@ export default function MampffredApp() {
               onClose={() => setShareCopyText(undefined)}
             />
           )}
-          {pendingDeletion && (
-            <div className="toast" role="status" aria-live="polite">
-              <Check size={17} /> Rezept gelöscht.
-              <button type="button" onClick={() => void undoDeleteRecipe()}>
-                Rückgängig
-              </button>
-            </div>
-          )}
-          {pendingShoppingDeletion && !pendingDeletion && (
-            <div className="toast" role="status" aria-live="polite">
-              <Check size={17} />{' '}
-              {pendingShoppingDeletion.removed.length === 1
-                ? 'Einkaufsartikel entfernt.'
-                : `${pendingShoppingDeletion.removed.length} Einkaufsartikel entfernt.`}
-              <button type="button" onClick={undoShoppingDeletion}>
-                Rückgängig
-              </button>
-            </div>
-          )}
-          {toast && !pendingDeletion && !pendingShoppingDeletion && (
-            <div
-              className={`toast ${toast.tone}`}
-              role="status"
-              aria-live="polite"
-            >
-              {toast.tone === 'error' ? (
-                <CircleAlert size={17} />
-              ) : (
-                <Check size={17} />
-              )}{' '}
-              {toast.message}
-            </div>
-          )}
+          <div className="toast-stack" aria-label="Hinweise">
+            {pendingDeletion && (
+              <AppToast
+                message={
+                  pendingDeletion.removed.length === 1
+                    ? 'Rezept gelöscht'
+                    : `${pendingDeletion.removed.length} Rezepte gelöscht`
+                }
+                detail={
+                  pendingDeletion.removed.length === 1
+                    ? '10 Sekunden zum Wiederherstellen.'
+                    : 'Alle gemeinsam wiederherstellen · 10 Sekunden.'
+                }
+                busy={undoBusy}
+                onUndo={() => void undoDeleteRecipe()}
+                onDismiss={finishRecipeDeletion}
+              />
+            )}
+            {pendingShoppingDeletion && (
+              <AppToast
+                message={
+                  pendingShoppingDeletion.removed.length === 1
+                    ? 'Einkaufsartikel entfernt'
+                    : `${pendingShoppingDeletion.removed.length} Einkaufsartikel entfernt`
+                }
+                onUndo={undoShoppingDeletion}
+                onDismiss={() => {
+                  window.clearTimeout(pendingShoppingDeletion.cleanupTimer);
+                  deletionTimers.current.delete(
+                    pendingShoppingDeletion.cleanupTimer,
+                  );
+                  setPendingShoppingDeletion(undefined);
+                }}
+              />
+            )}
+            {toast && (
+              <AppToast
+                message={toast.message}
+                tone={toast.tone}
+                onDismiss={() => {
+                  if (toastTimer.current)
+                    window.clearTimeout(toastTimer.current);
+                  setToast(undefined);
+                }}
+              />
+            )}
+          </div>
         </main>
       </div>
       {storageRecovery}

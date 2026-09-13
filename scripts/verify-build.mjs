@@ -7,6 +7,14 @@ const builtIndex = await readFile(join(outputDirectory, 'index.html'), 'utf8');
 const release = JSON.parse(
   await readFile(join(outputDirectory, 'version.json'), 'utf8'),
 );
+const packageInfo = JSON.parse(await readFile('package.json', 'utf8'));
+if (
+  !/^\d+\.\d+\.\d+$/.test(release.version) ||
+  release.version !== packageInfo.version
+)
+  throw new Error(
+    'Lesbare Versionsnummer stimmt nicht mit package.json überein.',
+  );
 if (
   !/^[a-f0-9]{12}$/.test(release.buildId) ||
   !serviceWorker.includes(release.buildId)
@@ -60,7 +68,9 @@ const builtScripts = (
   )
 ).join('\n');
 if (!builtScripts.includes(release.buildId))
-  throw new Error('Versionsanzeige fehlt im App-Build.');
+  throw new Error('Build-Kennung fehlt im App-Build.');
+if (!builtScripts.includes(release.version))
+  throw new Error('Lesbare Versionsnummer fehlt im App-Build.');
 if (
   !builtScripts.includes('Max Rubner-Institut') ||
   !builtScripts.includes(
