@@ -218,11 +218,16 @@ export async function replaceAllData(
   images: Record<string, Blob>,
 ) {
   const validated = migrateAppData(data);
+  for (const key of referencedImageKeys(validated)) {
+    if (!(images[key] instanceof Blob))
+      throw new Error('RESTORE_IMAGE_MISSING');
+  }
   const db = await openDatabase();
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(['app', 'images'], 'readwrite');
     const appStore = transaction.objectStore('app');
     const imageStore = transaction.objectStore('images');
+    appStore.clear();
     imageStore.clear();
     for (const [key, blob] of Object.entries(images)) imageStore.put(blob, key);
     appStore.put(validated, 'state');

@@ -2,12 +2,21 @@ const scopeUrl = new URL(self.registration.scope);
 const scopePath = scopeUrl.pathname;
 const CACHE_PREFIX = `mampffred-${encodeURIComponent(scopePath)}-`;
 const CACHE = `${CACHE_PREFIX}__MAMPFFRED_CACHE__`;
+const BUILD_ID = '__MAMPFFRED_BUILD__';
 const scopedUrl = (path = '') => new URL(path, scopeUrl).href;
 const APP_SHELL = __MAMPFFRED_PRECACHE__.map((path) => scopedUrl(path));
 const INBOX = `${CACHE_PREFIX}inbox`;
 let incomingQueue = Promise.resolve();
 
 self.addEventListener('message', (event) => {
+  if (event.data?.type === 'MAMPFFRED_VERSION') {
+    event.ports?.[0]?.postMessage({ buildId: BUILD_ID });
+    return;
+  }
+  if (event.data?.type === 'MAMPFFRED_ACTIVATE') {
+    event.waitUntil(self.skipWaiting());
+    return;
+  }
   if (
     event.data?.type !== 'focus-incoming' ||
     !/^(?:[a-f0-9-]{36}|error(?:-[A-Z_]{1,32})?)$/u.test(event.data.id || '')
@@ -145,8 +154,11 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE)
-      .then((cache) => cache.addAll(APP_SHELL))
-      .then(() => self.skipWaiting()),
+      .then((cache) =>
+        cache.addAll(
+          APP_SHELL.map((url) => new Request(url, { cache: 'reload' })),
+        ),
+      ),
   );
 });
 
@@ -161,6 +173,8 @@ self.addEventListener('activate', (event) => {
               (key) =>
                 key.startsWith(CACHE_PREFIX) && key !== CACHE && key !== INBOX,
             )
+            // Old open pages may still import chunks from their own release.
+            .slice(0, -2)
             .map((key) => caches.delete(key)),
         ),
       )
@@ -214,6 +228,19 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (event.request.mode === 'navigate') {
+    if (requestUrl.pathname === scopePath) {
+      // HTML and precached chunks belong to the same release until activation.
+      event.respondWith(
+        caches
+          .open(CACHE)
+          .then(
+            async (cache) =>
+              (await cache.match(scopedUrl())) ||
+              fetch(event.request, { cache: 'no-cache' }),
+          ),
+      );
+      return;
+    }
     event.respondWith(
       fetch(event.request)
         .then((response) => {
@@ -244,7 +271,9 @@ self.addEventListener('fetch', (event) => {
     return;
   event.respondWith(
     caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(event.request);
+      const cached =
+        (await cache.match(event.request)) ||
+        (await caches.match(event.request));
       const refresh = fetch(event.request)
         .then((response) => {
           if (response.ok && !response.redirected)

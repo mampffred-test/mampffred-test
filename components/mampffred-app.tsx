@@ -4,10 +4,14 @@ import { MIN_BACKUP_PASSWORD_LENGTH } from '@/lib/backup';
 import { FramedImage, ImageFramingEditor } from './image-framing';
 import { UnitPicker } from './unit-picker';
 import { RecipeStepsEditor } from './recipe-steps-editor';
+import { useAppUpdate } from './use-app-update';
+import { AppMaintenance, type AppUpdateControls } from './app-maintenance';
+import { APP_BUILD_ID } from '@/lib/app-version';
 import { scaledIngredientAmount } from '@/lib/ingredient-amount';
 import {
   installStandardRecipes,
   newStandardImageKeys,
+  restoreStandardRecipes,
 } from '@/lib/standard-recipes';
 
 /* oxlint-disable next/no-img-element, jsx-a11y/prefer-tag-over-role, react/immutability, react/refs, react/set-state-in-effect */
@@ -2054,8 +2058,8 @@ function MoreView({
       items: [
         {
           panel: 'app',
-          label: 'Installation & Darstellung',
-          detail: 'Warm & frisch · Version 0.1.0',
+          label: 'App & Updates',
+          detail: `Version ${APP_BUILD_ID}`,
           icon: <Settings size={20} />,
         },
       ],
@@ -4974,6 +4978,9 @@ function SettingsView({
   showIosHint,
   onNutritionSettings,
   onSaveCustomFood,
+  appUpdate,
+  onRepairStandards,
+  onResetApp,
 }: {
   data: AppData;
   panel: SettingsPanel;
@@ -4986,6 +4993,9 @@ function SettingsView({
   showIosHint: boolean;
   onNutritionSettings: (settings: NutritionSettings) => void;
   onSaveCustomFood: (food: CustomFood) => boolean;
+  appUpdate: AppUpdateControls;
+  onRepairStandards: () => Promise<void>;
+  onResetApp: () => Promise<void>;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const dialogRef = useModalFocus<HTMLDivElement>(onClose);
@@ -5033,7 +5043,7 @@ function SettingsView({
     nutrition: 'Nährwerte & Ziele',
     foods: 'Lebensmittel',
     privacy: 'Datenschutz & Speicher',
-    app: 'Installation & Darstellung',
+    app: 'App & Updates',
   };
   return (
     <div className={`detail-overlay ${inactive ? 'underlay' : ''}`}>
@@ -5047,6 +5057,16 @@ function SettingsView({
         aria-label={panelTitle[panel]}
       >
         <Header title={panelTitle[panel]} back={onClose} />
+        {(panel === 'app' || panel === 'privacy') && (
+          <AppMaintenance
+            data={data}
+            update={appUpdate}
+            onRepair={onRepairStandards}
+            onReset={onResetApp}
+            onBackup={onBackup}
+            mode={panel}
+          />
+        )}
         {panel === 'backup' && (
           <div className="backup-page">
             <section className="backup-hero-card">
@@ -5413,7 +5433,7 @@ function SettingsView({
               <div>
                 <ShieldCheck />
                 <span>Version</span>
-                <strong>0.1.0</strong>
+                <strong>{APP_BUILD_ID}</strong>
               </div>
             </div>
             <p className="privacy-note">
@@ -6190,6 +6210,8 @@ type ToastState = {
 };
 
 export default function MampffredApp() {
+  const appUpdate = useAppUpdate();
+  const [maintenanceBusy, setMaintenanceBusy] = useState(false);
   const [data, publishData] = useState<AppData>(() => createEmptyData());
   const dataRef = useRef(data);
   const pendingImages = useRef<Record<string, Blob>>({});
@@ -6444,6 +6466,7 @@ export default function MampffredApp() {
     };
   }, [loadAttempt]);
   useEffect(() => {
+    if (maintenanceBusy) return;
     if (loadState !== 'ready' || writerState !== 'ready') return;
     if (installStandardRecipes(dataRef.current) === dataRef.current) return;
     let cancelled = false;
@@ -6482,7 +6505,7 @@ export default function MampffredApp() {
     return () => {
       cancelled = true;
     };
-  }, [loadState, writerState]);
+  }, [loadState, writerState, maintenanceBusy]);
   useEffect(() => {
     if (loadState !== 'ready') return;
     let cancelled = false;
@@ -6658,14 +6681,6 @@ export default function MampffredApp() {
       window.removeEventListener('hashchange', inspectSharedRecipe);
     };
   }, [loadState]);
-  useEffect(() => {
-    if (import.meta.env.PROD && 'serviceWorker' in navigator)
-      navigator.serviceWorker
-        .register(`${import.meta.env.BASE_URL}sw.js`, {
-          scope: import.meta.env.BASE_URL,
-        })
-        .catch(() => undefined);
-  }, []);
   useEffect(() => {
     if (loadState !== 'ready' || writerState !== 'ready') return;
     // Supported by current Safari and Chromium; refusal never blocks local use.
@@ -7706,6 +7721,80 @@ export default function MampffredApp() {
     restoreCandidate.current = decrypted.payload;
     return decrypted.preview;
   }
+  async function applyAppUpdate() {
+    setMaintenanceBusy(true);
+    try {
+      await lastSave.current;
+      await appUpdate.apply();
+    } finally {
+      setMaintenanceBusy(false);
+    }
+  }
+  async function repairStandardRecipes() {
+    setMaintenanceBusy(true);
+    try {
+      await lastSave.current;
+      const next = restoreStandardRecipes(dataRef.current);
+      const { loadStandardRecipeImages } =
+        await import('@/lib/standard-recipe-images');
+      const bundledKeys = new Set(
+        newStandardImageKeys(
+          createEmptyData(),
+          installStandardRecipes(createEmptyData()),
+        ),
+      );
+      const missingKeys: string[] = [];
+      for (const recipe of next.recipes) {
+        if (
+          recipe.imageKey &&
+          bundledKeys.has(recipe.imageKey) &&
+          !(await loadRecipeImage(recipe.imageKey))
+        )
+          missingKeys.push(recipe.imageKey);
+      }
+      const images = await loadStandardRecipeImages(missingKeys);
+      await commitData(next, images);
+      setImageUrls((current) => {
+        const urls = { ...current };
+        for (const [key, image] of Object.entries(images))
+          if (!urls[key]) urls[key] = URL.createObjectURL(image);
+        return urls;
+      });
+      showToast('Fehlende Standardrezepte wurden ergänzt.');
+    } finally {
+      setMaintenanceBusy(false);
+    }
+  }
+  async function resetApp() {
+    setMaintenanceBusy(true);
+    try {
+      await lastSave.current;
+      const fresh = installStandardRecipes(createEmptyData());
+      const { loadStandardRecipeImages } =
+        await import('@/lib/standard-recipe-images');
+      const images = await loadStandardRecipeImages(
+        newStandardImageKeys(createEmptyData(), fresh),
+      );
+      // No user data is removed until all four images are available.
+      if ('caches' in window)
+        await caches.delete(
+          `mampffred-${encodeURIComponent(import.meta.env.BASE_URL)}-inbox`,
+        );
+      for (const timer of deletionTimers.current) window.clearTimeout(timer);
+      deletionTimers.current.clear();
+      await queueReplaceAllData(fresh, images);
+      ++saveRevision.current;
+      pendingImages.current = {};
+      retainedImages.current = [];
+      dataRef.current = fresh;
+      publishData(fresh);
+      window.location.replace(
+        new URL(import.meta.env.BASE_URL, window.location.origin).href,
+      );
+    } finally {
+      setMaintenanceBusy(false);
+    }
+  }
   async function confirmRestore() {
     const payload = restoreCandidate.current;
     if (!payload) throw new Error('MISSING_RESTORE_CANDIDATE');
@@ -7740,7 +7829,7 @@ export default function MampffredApp() {
     setBackupRequest(undefined);
     showToast('Sicherung wurde wiederhergestellt.');
   }
-  if (loadState === 'loading' || writerState === 'checking')
+  if (loadState === 'loading' || writerState === 'checking' || maintenanceBusy)
     return (
       <main className="app-loading">
         <Image
@@ -7909,6 +7998,28 @@ export default function MampffredApp() {
               <button onClick={() => setMutationError('')}>Verstanden</button>
             </div>
           )}
+          {appUpdate.status === 'available' &&
+            !editorRecipeId &&
+            !planner &&
+            !settings &&
+            !backupRequest &&
+            !selectedRecipeId &&
+            !selectedDayDate && (
+              <div className="app-update-banner" role="status">
+                <span>Eine neue Version ist bereit.</span>
+                <button
+                  onClick={() =>
+                    void applyAppUpdate().catch(() =>
+                      showToast(
+                        'Update nicht abgeschlossen. Bitte erneut versuchen.',
+                      ),
+                    )
+                  }
+                >
+                  Jetzt aktualisieren
+                </button>
+              </div>
+            )}
           <div className="desktop-intro">
             <Image
               src={assetUrl('assets/mampffred-mascot-small.png')}
@@ -8234,6 +8345,9 @@ export default function MampffredApp() {
                 /iPad|iPhone|iPod/.test(navigator.userAgent) &&
                 !window.matchMedia('(display-mode: standalone)').matches
               }
+              appUpdate={{ ...appUpdate, apply: applyAppUpdate }}
+              onRepairStandards={repairStandardRecipes}
+              onResetApp={resetApp}
             />
           )}
           {backupRequest && !storageFailure && (

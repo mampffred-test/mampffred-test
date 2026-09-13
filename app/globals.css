@@ -6503,3 +6503,71 @@ select:focus-visible {
   border: 1px solid #ddc1b8;
   font-size: 0.85rem;
 }
+.maintenance-section {
+  padding: 18px 16px;
+}
+.maintenance-section h2 {
+  font-size: 1.15rem;
+  margin-bottom: 12px;
+}
+.maintenance-section p {
+  font-size: 0.87rem;
+  line-height: 1.5;
+  margin: 10px 0;
+  color: var(--muted);
+}
+.maintenance-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+.maintenance-card button {
+  width: 100%;
+  margin-top: 10px;
+  min-height: 48px;
+}
+.maintenance-card label {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: 0.85rem;
+}
+.maintenance-card input {
+  min-height: 48px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--card);
+}
+.reset-confirm-button {
+  background: var(--danger);
+}
+.installation-address {
+  overflow-wrap: anywhere;
+}
+.app-update-banner {
+  position: fixed;
+  top: max(8px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(360px, calc(100% - 24px));
+  z-index: 90;
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--cream);
+  box-shadow: var(--shadow);
+}
+.app-update-banner button {
+  min-height: 44px;
+  color: white;
+  background: var(--green);
+  border: 0;
+  border-radius: 12px;
+  font-weight: 700;
+}

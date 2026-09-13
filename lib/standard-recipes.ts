@@ -1,6 +1,34 @@
 import type { AppData, Recipe } from './model.ts';
 import { additionalStandardRecipes } from './standard-recipe-catalog.ts';
 
+export function restoreStandardRecipes(data: AppData): AppData {
+  const packs = new Set([
+    STANDARD_RECIPE_PACK,
+    ...additionalStandardRecipes.map((entry) => entry.pack),
+  ]);
+  return installStandardRecipes({
+    ...data,
+    installedSamplePacks: data.installedSamplePacks.filter(
+      (pack) => !packs.has(pack),
+    ),
+  });
+}
+
+export function standardRecipeCount(data: AppData): number {
+  const recipes = [
+    { recipe: createCannelloniRecipe(), aliases: [] as string[] },
+    ...additionalStandardRecipes,
+  ];
+  return recipes.filter(({ recipe, aliases }) =>
+    data.recipes.some(
+      (entry) =>
+        entry.id === recipe.id ||
+        entry.shareId === recipe.shareId ||
+        aliases.includes(entry.shareId),
+    ),
+  ).length;
+}
+
 export const STANDARD_RECIPE_PACK = 'mampffred-cannelloni-v1';
 export const CANNELLONI_IMAGE_KEY = 'standard-cannelloni-image-v1';
 

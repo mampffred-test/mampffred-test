@@ -4,8 +4,42 @@ import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
+import { readFileSync, readdirSync } from 'node:fs';
 
 const outputDirectory = 'dist/client';
+
+// Include worker and static assets as well: every shipped change gets a new identity.
+function buildIdentity() {
+  const hash = createHash('sha256');
+  const visit = (path: string) => {
+    for (const entry of readdirSync(path, { withFileTypes: true }).sort(
+      (a, b) => a.name.localeCompare(b.name, 'en'),
+    )) {
+      const file = join(path, entry.name);
+      if (entry.isDirectory()) visit(file);
+      else {
+        const bytes = readFileSync(file);
+        hash.update(file.replaceAll('\\', '/'));
+        hash.update(
+          /\.(ts|tsx|js|css|html|json|webmanifest)$/.test(file)
+            ? bytes.toString('utf8').replaceAll('\r\n', '\n')
+            : bytes,
+        );
+      }
+    }
+  };
+  for (const directory of ['src', 'components', 'lib', 'app', 'public'])
+    visit(directory);
+  for (const file of [
+    'package.json',
+    'package-lock.json',
+    'vite.config.ts',
+    'index.html',
+  ])
+    hash.update(readFileSync(file, 'utf8').replaceAll('\r\n', '\n'));
+  return hash.digest('hex').slice(0, 12);
+}
+const buildId = buildIdentity();
 
 function deploymentBase() {
   if (process.env.VITE_BASE_PATH) return process.env.VITE_BASE_PATH;
@@ -40,6 +74,7 @@ function serviceWorkerPrecache() {
         ...builtAssets,
       ];
       const cacheVersion = createHash('sha256')
+        .update(buildId)
         .update(appShell.join('|'))
         .digest('hex')
         .slice(0, 12);
@@ -47,13 +82,19 @@ function serviceWorkerPrecache() {
         serviceWorkerPath,
         source
           .replace('__MAMPFFRED_PRECACHE__', JSON.stringify(appShell))
-          .replace('__MAMPFFRED_CACHE__', cacheVersion),
+          .replace('__MAMPFFRED_CACHE__', cacheVersion)
+          .replace('__MAMPFFRED_BUILD__', buildId),
+      );
+      await writeFile(
+        join(outputDirectory, 'version.json'),
+        JSON.stringify({ buildId }),
       );
     },
   };
 }
 
 export default defineConfig({
+  define: { __APP_BUILD_ID__: JSON.stringify(buildId) },
   base: deploymentBase(),
   plugins: [react(), serviceWorkerPrecache()],
   resolve: {

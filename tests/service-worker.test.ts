@@ -4,6 +4,8 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 type TestWorkerEvent = {
+  data?: { type: string };
+  ports?: { postMessage: (data: unknown) => void }[];
   request?: {
     method: string;
     mode?: string;
@@ -14,18 +16,23 @@ type TestWorkerEvent = {
   waitUntil: (work: Promise<void>) => void;
 };
 
-function harness(source: string) {
+function harness(source: string, retainedAsset = false) {
   const listeners: Record<string, (event: TestWorkerEvent) => void> = {};
   const puts: string[] = [],
     deleted: string[] = [],
     navigated: string[] = [];
   let unregistered = false;
+  let activated = 0;
+  const downloads: Request[] = [];
   const cache = {
-    addAll: async () => {},
+    addAll: async (requests: Request[]) => {
+      downloads.push(...requests);
+    },
     put: async (key: string) => {
       puts.push(key);
     },
-    match: async () => new Response('offline app'),
+    match: async () =>
+      retainedAsset ? undefined : new Response('offline app'),
   };
   const self = {
     registration: {
@@ -34,7 +41,9 @@ function harness(source: string) {
         unregistered = true;
       },
     },
-    skipWaiting: async () => {},
+    skipWaiting: async () => {
+      activated++;
+    },
     clients: {
       claim: async () => {},
       matchAll: async () =>
@@ -57,7 +66,10 @@ function harness(source: string) {
     self,
     URL,
     Response,
+    Request,
     caches: {
+      match: async () =>
+        retainedAsset ? new Response('retained release chunk') : undefined,
       open: async () => cache,
       keys: async () => [
         'mampffred-%2Fapp%2F-old',
@@ -77,13 +89,17 @@ function harness(source: string) {
     puts,
     deleted,
     navigated,
+    downloads,
+    get activated() {
+      return activated;
+    },
     get unregistered() {
       return unregistered;
     },
   };
 }
 
-test('nur die exakte App-Wurzel aktualisiert die Offline-Shell', async () => {
+test('Navigation überschreibt keine vorbereitete Release-Shell mit fremden oder neuen HTML-Dateien', async () => {
   const h = harness(
     readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8'),
   );
@@ -104,7 +120,82 @@ test('nur die exakte App-Wurzel aktualisiert die Offline-Shell', async () => {
     });
     await Promise.all(work);
   }
-  assert.deepEqual(h.puts, ['https://example.test/app/']);
+  assert.deepEqual(h.puts, []);
+});
+
+test('Installation lädt frische vollständige Assets, aktiviert aber erst nach Bestätigung', async () => {
+  const h = harness(
+    readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8'),
+  );
+  const work: Promise<void>[] = [];
+  h.listeners.install({
+    waitUntil: (promise) => {
+      work.push(promise);
+    },
+  });
+  await Promise.all(work);
+  assert.equal(h.downloads.length, 1);
+  assert.equal(h.downloads[0].cache, 'reload');
+  assert.equal(h.activated, 0);
+  h.listeners.message({
+    data: { type: 'MAMPFFRED_ACTIVATE' },
+    waitUntil: (promise) => {
+      work.push(promise);
+    },
+  });
+  await Promise.all(work);
+  assert.equal(h.activated, 1);
+});
+
+test('Worker beantwortet Versionsabfragen ohne Nutzerdaten oder Netzwerkzugriff', () => {
+  const source = readFileSync(
+    new URL('../public/sw.js', import.meta.url),
+    'utf8',
+  ).replace('__MAMPFFRED_BUILD__', '123456abcdef');
+  const h = harness(source);
+  let response: unknown;
+  h.listeners.message({
+    data: { type: 'MAMPFFRED_VERSION' },
+    ports: [
+      {
+        postMessage: (data) => {
+          response = data;
+        },
+      },
+    ],
+    waitUntil: () => {},
+  });
+  assert.equal(
+    JSON.stringify(response),
+    JSON.stringify({ buildId: '123456abcdef' }),
+  );
+});
+
+test('offene alte App-Fenster können ihre behaltenen Module auch nach Aktivierung nachladen', async () => {
+  const h = harness(
+    readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8'),
+    true,
+  );
+  let response: Promise<unknown> | undefined;
+  const work: Promise<void>[] = [];
+  h.listeners.fetch({
+    request: {
+      method: 'GET',
+      destination: 'script',
+      url: 'https://example.test/app/assets/old-version.js',
+    },
+    respondWith(promise) {
+      response = promise;
+    },
+    waitUntil(promise) {
+      work.push(promise);
+    },
+  });
+  assert.equal(
+    await ((await response) as Response).text(),
+    'retained release chunk',
+  );
+  await Promise.all(work);
 });
 
 test('Notfall-Worker räumt nur den eigenen Cache und eigene Clients auf', async () => {

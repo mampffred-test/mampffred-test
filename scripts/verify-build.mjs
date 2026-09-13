@@ -4,6 +4,22 @@ import { join } from 'node:path';
 const outputDirectory = 'dist/client';
 const serviceWorker = await readFile(join(outputDirectory, 'sw.js'), 'utf8');
 const builtIndex = await readFile(join(outputDirectory, 'index.html'), 'utf8');
+const release = JSON.parse(
+  await readFile(join(outputDirectory, 'version.json'), 'utf8'),
+);
+if (
+  !/^[a-f0-9]{12}$/.test(release.buildId) ||
+  !serviceWorker.includes(release.buildId)
+)
+  throw new Error(
+    'Build-Version von App und Service Worker ist nicht konsistent.',
+  );
+for (const recoveryFile of [
+  'update.html',
+  'update-recovery-v1.js',
+  'update-recovery-v1.css',
+])
+  await access(join(outputDirectory, recoveryFile));
 
 if (!builtIndex.includes("connect-src 'none'"))
   throw new Error(
@@ -43,6 +59,8 @@ const builtScripts = (
       .map((file) => readFile(join(outputDirectory, 'assets', file), 'utf8')),
   )
 ).join('\n');
+if (!builtScripts.includes(release.buildId))
+  throw new Error('Versionsanzeige fehlt im App-Build.');
 if (
   !builtScripts.includes('Max Rubner-Institut') ||
   !builtScripts.includes(
