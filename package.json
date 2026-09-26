@@ -22,15 +22,15 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
-    "@types/node": "24.13.3",
+    "@types/node": "24.13.6",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
     "@vitejs/plugin-react": "6.1.1",
-    "oxfmt": "0.67.0",
-    "oxlint": "1.82.0",
-    "oxlint-tsgolint": "7.0.2001",
+    "oxfmt": "0.70.0",
+    "oxlint": "1.85.0",
+    "oxlint-tsgolint": "7.0.2002",
     "typescript": "7.0.2",
-    "vite": "^8.2.2"
+    "vite": "^8.3.0"
   },
   "type": "module"
 }
