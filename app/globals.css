@@ -6612,18 +6612,88 @@ select:focus-visible {
   display: grid;
   gap: 8px;
   padding: 14px;
-  border: 1px solid var(--line);
+  border: 2px solid #d5e7a8;
   border-radius: 16px;
-  background: var(--cream);
-  box-shadow: var(--shadow);
+  color: #fff;
+  background: #25471c;
+  box-shadow: 0 12px 36px rgb(20 45 12 / 35%);
 }
 .app-update-banner button {
   min-height: 44px;
-  color: white;
-  background: var(--green);
+  color: #17301a;
+  background: #f2d978;
   border: 0;
   border-radius: 12px;
   font-weight: 700;
+}
+.app-update-message {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.app-update-message strong,
+.app-update-message small {
+  display: block;
+}
+.app-update-message small {
+  margin-top: 4px;
+  color: #e2ecd9;
+}
+.app-update-banner button:hover {
+  background: #ffe79a;
+}
+.app-update-banner button:focus-visible {
+  outline: 3px solid white;
+  outline-offset: 3px;
+}
+.meal-planning-settings {
+  padding: 20px;
+}
+.meal-slot-options {
+  display: grid;
+  gap: 12px;
+  margin: 24px 0;
+}
+.meal-slot-options label {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+  border: 2px solid var(--line);
+  border-radius: 18px;
+  background: var(--card);
+  cursor: pointer;
+}
+.meal-slot-options label.is-selected {
+  border-color: var(--green);
+  background: #edf3e5;
+}
+.meal-slot-options input {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--green);
+}
+.meal-slot-options strong,
+.meal-slot-options small {
+  display: block;
+}
+.meal-slot-options small {
+  margin-top: 4px;
+  color: var(--muted);
+}
+.meal-settings-note {
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.single-meal-mode .compact-meal-icons {
+  display: none;
+}
+.single-meal-mode .week-compact-day {
+  grid-template-columns: 48px minmax(0, 1fr) auto 18px;
+}
+.single-meal-mode .day-meals {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .app-version {
@@ -6654,4 +6724,34 @@ select:focus-visible {
   height: 1rem;
   min-height: 0;
   accent-color: var(--green);
+}
+.maintenance-section .maintenance-card.has-app-update {
+  border: 2px solid var(--green);
+  background: #edf3e5;
+}
+.maintenance-section .update-apply-button {
+  color: #17301a;
+  background: #f2d978;
+  border: 2px solid #9c7622;
+  font-weight: 800;
+  box-shadow: 0 4px 12px rgb(80 65 20 / 18%);
+}
+.maintenance-section .update-apply-button:hover {
+  background: #ffe79a;
+}
+.single-meal-mode .day-card.is-featured {
+  min-height: 130px;
+}
+.single-meal-mode .day-card.is-featured .day-date {
+  min-height: 112px;
+}
+.single-meal-mode .day-date em {
+  display: none;
+}
+.week-view .day-meals {
+  grid-template-rows: none;
+  grid-auto-rows: minmax(72px, 1fr);
+}
+.planner-sheet > .field-row:has(> label:only-child) {
+  grid-template-columns: 1fr;
 }

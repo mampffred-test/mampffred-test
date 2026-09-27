@@ -1,8 +1,12 @@
 import { addLocalDays, parseLocalDate } from './local-date.ts';
 import { scaledIngredientAmount } from './ingredient-amount.ts';
+import { getEnabledMealSlots } from './meal-slots.ts';
 import type { AppData, MealSlot, Recipe, ShoppingItem } from './model.ts';
 
-type WeekShoppingInput = Pick<AppData, 'plan' | 'recipes' | 'shopping'>;
+type WeekShoppingInput = Pick<
+  AppData,
+  'plan' | 'recipes' | 'shopping' | 'enabledMealSlots'
+>;
 
 export type WeekShoppingPreview = {
   weekStart: string;
@@ -152,6 +156,7 @@ function desiredGroups(input: WeekShoppingInput, weekStart: string) {
   for (const day of input.plan) {
     if (!dates.has(day.date)) continue;
     for (const meal of day.meals) {
+      if (!getEnabledMealSlots(input).includes(meal.slot)) continue;
       plannedMealCount += 1;
       const recipe = recipes.get(meal.recipeId);
       if (!recipe) {

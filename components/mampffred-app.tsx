@@ -1,4 +1,10 @@
 'use client';
+import {
+  ALL_MEAL_SLOTS,
+  getEnabledMealSlots,
+  visibleMealPlan,
+} from '@/lib/meal-slots';
+
 import { validateDataUpdate, referencedImageKeys } from '@/lib/data-updates';
 import { MIN_BACKUP_PASSWORD_LENGTH } from '@/lib/backup';
 import { FramedImage, ImageFramingEditor } from './image-framing';
@@ -174,7 +180,13 @@ import {
 } from '@/lib/week-shopping';
 
 type Tab = AppTab;
-type SettingsPanel = 'backup' | 'nutrition' | 'foods' | 'privacy' | 'app';
+type SettingsPanel =
+  | 'planning'
+  | 'backup'
+  | 'nutrition'
+  | 'foods'
+  | 'privacy'
+  | 'app';
 type PlannerState = {
   date: string;
   slot: MealSlot;
@@ -221,7 +233,7 @@ const sharePreparationMessage = (error: unknown) =>
     error.message === 'SHARED_RECIPE_TOO_LARGE')
     ? 'Dieses Rezept ist zu umfangreich für einen Rezeptlink. Sichere es stattdessen als Rezeptdatei.'
     : 'Das Rezept konnte gerade nicht geteilt werden.';
-const mealSlots: MealSlot[] = ['Frühstück', 'Mittagessen', 'Abendessen'];
+
 const RecipeImageRequestContext = createContext<(key: string) => void>(
   () => undefined,
 );
@@ -636,6 +648,8 @@ function TodayView({
   onAddRecipe: () => void;
   onAddSamples: () => void;
 }) {
+  const mealSlots = getEnabledMealSlots(data);
+  const visiblePlan = visibleMealPlan(data);
   const todayIso = todayLocal(now);
   const lastBackup = data.lastBackup ? new Date(data.lastBackup) : undefined;
   const lastBackupDay = lastBackup
@@ -644,7 +658,7 @@ function TodayView({
       : shortDate.format(lastBackup)
     : undefined;
   const backupReminder = getBackupReminder(data.lastBackup, now);
-  const current = data.plan.find((day) => day.date === todayIso);
+  const current = visiblePlan.find((day) => day.date === todayIso);
   const meals =
     current?.meals
       .toSorted(
@@ -656,7 +670,9 @@ function TodayView({
         return recipe ? [{ ...meal, recipe }] : [];
       }) ?? [];
   return (
-    <div className="screen-content today-view">
+    <div
+      className={`screen-content today-view ${mealSlots.length === 1 ? 'single-meal-mode' : ''}`}
+    >
       <Header
         title={greeting(now)}
         subtitle={localeDate.format(now)}
@@ -681,7 +697,9 @@ function TodayView({
       <section>
         <h2>Heute gibt&apos;s</h2>
         <p className="section-subtitle">
-          Deine geplanten Mahlzeiten für einen genussvollen Tag.
+          {mealSlots.length === 1
+            ? `Dein ${mealSlots[0]} für heute.`
+            : 'Deine geplanten Mahlzeiten für einen genussvollen Tag.'}
         </p>
         {meals.length ? (
           <>
@@ -720,11 +738,13 @@ function TodayView({
               <span>
                 <Utensils size={19} />
                 <strong>{meals.length}</strong>
-                <small>Mahlzeiten</small>
+                <small>{meals.length === 1 ? 'Mahlzeit' : 'Mahlzeiten'}</small>
               </span>
               <span>
                 <Leaf size={19} />
-                <strong>{meals.length === 3 ? 'Plan steht' : 'Im Plan'}</strong>
+                <strong>
+                  {meals.length === mealSlots.length ? 'Plan steht' : 'Im Plan'}
+                </strong>
                 <small>für heute</small>
               </span>
               <span>
@@ -838,10 +858,12 @@ function WeekView({
   onEditRecipes: (recipes: Recipe[]) => void;
   onOpenDay: (date: string) => void;
 }) {
+  const mealSlots = getEnabledMealSlots(data);
+  const visiblePlan = visibleMealPlan(data);
   const today = todayLocal();
   const days = Array.from({ length: 7 }, (_, index) => {
     const date = addLocalDays(weekStart, index);
-    return data.plan.find((day) => day.date === date) ?? { date, meals: [] };
+    return visiblePlan.find((day) => day.date === date) ?? { date, meals: [] };
   });
   const first = fromIso(days[0].date);
   const last = fromIso(days[6].date);
@@ -852,7 +874,7 @@ function WeekView({
   const dayStripRef = useRef<HTMLElement>(null);
   const selectableDays = Array.from({ length: 21 }, (_, index) => {
     const date = addLocalDays(weekStart, index - 7);
-    return data.plan.find((day) => day.date === date) ?? { date, meals: [] };
+    return visiblePlan.find((day) => day.date === date) ?? { date, meals: [] };
   });
   useEffect(() => {
     const weekEnd = addLocalDays(weekStart, 6);
@@ -916,7 +938,9 @@ function WeekView({
     ).values(),
   ];
   return (
-    <div className="screen-content week-view">
+    <div
+      className={`screen-content week-view ${mealSlots.length === 1 ? 'single-meal-mode' : ''}`}
+    >
       <header className="week-hero">
         <div className="week-hero-copy">
           <h1>Deine Woche</h1>
@@ -1300,10 +1324,12 @@ function DayDetailSheet({
   onNutritionSetup: () => void;
   inactive?: boolean;
 }) {
+  const mealSlots = getEnabledMealSlots(data);
+  const visiblePlan = visibleMealPlan(data);
   const sheetExit = useAnimatedSheetClose(onClose);
   const dialogRef = useModalFocus<HTMLElement>(sheetExit.close);
   const sheetSwipe = useSheetSwipeToClose(onClose);
-  const plannedDay = data.plan.find((day) => day.date === date);
+  const plannedDay = visiblePlan.find((day) => day.date === date);
   const nutrition = aggregateNutritionDay(data, date);
   const nutrients = [
     ['energyKcal', 'Energie', 'kcal'],
@@ -2025,6 +2051,12 @@ function MoreView({
     {
       title: 'Planung & Inhalte',
       items: [
+        {
+          panel: 'planning',
+          label: 'Mahlzeiten planen',
+          detail: getEnabledMealSlots(data).join(' · '),
+          icon: <CalendarDays size={20} />,
+        },
         {
           panel: 'nutrition',
           label: 'Nährwerte & Ziele',
@@ -4713,7 +4745,10 @@ function PlannerSheet({
 }) {
   const sheetExit = useAnimatedSheetClose(onClose);
   const [date, setDate] = useState(initialDate);
-  const [slot, setSlot] = useState(initialSlot);
+  const mealSlots = getEnabledMealSlots(data);
+  const [slot, setSlot] = useState(
+    mealSlots.includes(initialSlot) ? initialSlot : mealSlots[0],
+  );
   const dialogRef = useModalFocus<HTMLElement>(sheetExit.close);
   const sheetSwipe = useSheetSwipeToClose(onClose);
   const weekStart = startOfLocalWeek(fromIso(initialDate));
@@ -4781,7 +4816,11 @@ function PlannerSheet({
         <div className="modal-header">
           <div>
             <h2 id="planner-title">Was möchtest du planen?</h2>
-            <p>Wähle Tag, Mahlzeit und ein Rezept für deinen Essensplan.</p>
+            <p>
+              {mealSlots.length === 1
+                ? `Plane dein ${mealSlots[0]}: Wähle Tag und Rezept.`
+                : 'Wähle Tag, Mahlzeit und ein Rezept für deinen Essensplan.'}
+            </p>
           </div>
           <IconButton label="Schließen" onClick={sheetExit.close}>
             <X size={20} />
@@ -4805,23 +4844,23 @@ function PlannerSheet({
               ))}
             </select>
           </label>
-          <label>
-            Mahlzeit
-            <select
-              value={slot}
-              onChange={(event) => {
-                const nextSlot = event.target.value as MealSlot;
-                setSlot(nextSlot);
-                syncSelection(date, nextSlot);
-              }}
-            >
-              {(['Frühstück', 'Mittagessen', 'Abendessen'] as MealSlot[]).map(
-                (item) => (
+          {mealSlots.length > 1 && (
+            <label>
+              Mahlzeit
+              <select
+                value={slot}
+                onChange={(event) => {
+                  const nextSlot = event.target.value as MealSlot;
+                  setSlot(nextSlot);
+                  syncSelection(date, nextSlot);
+                }}
+              >
+                {mealSlots.map((item) => (
                   <option key={item}>{item}</option>
-                ),
-              )}
-            </select>
-          </label>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
         <fieldset className="planner-servings">
           <legend>Portionen für Einkauf und Zubereitung</legend>
@@ -5015,6 +5054,7 @@ function SettingsView({
   onInstall,
   showIosHint,
   onNutritionSettings,
+  onMealSlots,
   onSaveCustomFood,
   appUpdate,
   onRepairStandards,
@@ -5030,6 +5070,7 @@ function SettingsView({
   onInstall: () => Promise<void>;
   showIosHint: boolean;
   onNutritionSettings: (settings: NutritionSettings) => void;
+  onMealSlots: (slots: MealSlot[]) => void;
   onSaveCustomFood: (food: CustomFood) => boolean;
   appUpdate: AppUpdateControls;
   onRepairStandards: () => Promise<void>;
@@ -5077,6 +5118,7 @@ function SettingsView({
     });
   }
   const panelTitle: Record<SettingsPanel, string> = {
+    planning: 'Mahlzeiten planen',
     backup: 'Sicherung',
     nutrition: 'Nährwerte & Ziele',
     foods: 'Lebensmittel',
@@ -5095,6 +5137,57 @@ function SettingsView({
         aria-label={panelTitle[panel]}
       >
         <Header title={panelTitle[panel]} back={onClose} />
+        {panel === 'planning' && (
+          <section className="meal-planning-settings">
+            <h2>Was möchtest du planen?</h2>
+            <p>
+              Wähle die Mahlzeiten, die zu deinem Alltag passen. Dein Essensplan
+              und die Übersichten passen sich automatisch an.
+            </p>
+            <div className="meal-slot-options">
+              {ALL_MEAL_SLOTS.map((slot) => {
+                const selected = getEnabledMealSlots(data);
+                const checked = selected.includes(slot);
+                return (
+                  <label
+                    key={slot}
+                    aria-label={slot}
+                    className={checked ? 'is-selected' : ''}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={checked && selected.length === 1}
+                      onChange={() =>
+                        onMealSlots(
+                          checked
+                            ? selected.filter((item) => item !== slot)
+                            : [...selected, slot],
+                        )
+                      }
+                    />
+                    <span>
+                      <strong>{slot}</strong>
+                      <small>
+                        {slot === 'Frühstück'
+                          ? 'Gut in den Tag starten'
+                          : slot === 'Mittagessen'
+                            ? 'Eine Pause zum Genießen'
+                            : 'Den Tag lecker ausklingen lassen'}
+                      </small>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <p className="meal-settings-note">
+              Mindestens eine Mahlzeit bleibt aktiv. Bereits geplante Mahlzeiten
+              werden beim Abwählen ausgeblendet und beim Aktivieren wieder
+              angezeigt. Der Wocheneinkauf und die Nährwertübersichten
+              berücksichtigen nur deine Auswahl.
+            </p>
+          </section>
+        )}
         {(panel === 'app' || panel === 'privacy') && (
           <AppMaintenance
             data={data}
@@ -6246,6 +6339,7 @@ export default function MampffredApp() {
   const appUpdate = useAppUpdate();
   const [maintenanceBusy, setMaintenanceBusy] = useState(false);
   const [data, publishData] = useState<AppData>(() => createEmptyData());
+  const mealSlots = getEnabledMealSlots(data);
   const dataRef = useRef(data);
   const pendingImages = useRef<Record<string, Blob>>({});
   const retainedImages = useRef<string[]>([]);
@@ -7406,6 +7500,7 @@ export default function MampffredApp() {
     recipeId?: string,
     servings?: number,
   ) {
+    slot = mealSlots.includes(slot) ? slot : mealSlots[0];
     if (!data.recipes.length) {
       setPendingPlanTarget({ date, slot });
       openNewRecipeEditor();
@@ -8025,7 +8120,13 @@ export default function MampffredApp() {
             !selectedRecipeId &&
             !selectedDayDate && (
               <div className="app-update-banner" role="status">
-                <span>Eine neue Version ist bereit.</span>
+                <div className="app-update-message">
+                  <Download size={24} aria-hidden="true" />
+                  <span>
+                    <strong>Ein Update für Mampffred ist da!</strong>
+                    <small>Die neue Version ist bereit.</small>
+                  </span>
+                </div>
                 <button
                   onClick={() =>
                     void applyAppUpdate().catch(() =>
@@ -8358,6 +8459,30 @@ export default function MampffredApp() {
               onInstall={installApp}
               onNutritionSettings={(nutritionSettings) =>
                 void updateNutritionSettings(nutritionSettings)
+              }
+              onMealSlots={(enabledMealSlots) =>
+                setData((current) => {
+                  if (!enabledMealSlots.length) return current;
+                  let next = {
+                    ...current,
+                    enabledMealSlots: ALL_MEAL_SLOTS.filter((slot) =>
+                      enabledMealSlots.includes(slot),
+                    ),
+                  };
+                  const weeks = new Set(
+                    current.shopping.flatMap((item) =>
+                      item.origin.kind === 'week'
+                        ? [item.origin.weekStart]
+                        : [],
+                    ),
+                  );
+                  for (const week of weeks)
+                    next = {
+                      ...next,
+                      shopping: reconcileWeekShopping(next, week).shopping,
+                    };
+                  return next;
+                })
               }
               onSaveCustomFood={saveCustomFood}
               showIosHint={

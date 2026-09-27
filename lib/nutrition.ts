@@ -1,3 +1,4 @@
+import { visibleMealPlan } from './meal-slots.ts';
 import type { AppData, NutrientKey, Recipe } from './model.ts';
 import { addLocalDays } from './local-date.ts';
 
@@ -117,7 +118,7 @@ export function aggregateNutritionWeek(
 ): WeeklyNutrition {
   const weekEnd = addLocalDays(weekStart, 6);
   const recipeById = new Map(data.recipes.map((recipe) => [recipe.id, recipe]));
-  const meals = data.plan
+  const meals = visibleMealPlan(data)
     .filter((day) => day.date >= weekStart && day.date <= weekEnd)
     .flatMap((day) => day.meals)
     .filter(
@@ -220,7 +221,7 @@ export function suggestRecipesForWeek(
   const goals = data.nutritionSettings.goals;
   if (!Array.isArray(goals) || week.mealCount === 0) return [];
   const plannedRecipeIds = new Set(
-    data.plan
+    visibleMealPlan(data)
       .filter((day) => day.date >= week.weekStart && day.date <= week.weekEnd)
       .flatMap((day) => day.meals.map((meal) => meal.recipeId)),
   );

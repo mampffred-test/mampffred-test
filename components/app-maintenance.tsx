@@ -56,7 +56,9 @@ export function AppMaintenance({
       {mode === 'app' ? (
         <>
           <h2>Updates & Rezepte</h2>
-          <div className="maintenance-card">
+          <div
+            className={`maintenance-card ${update.status === 'available' ? 'has-app-update' : ''}`}
+          >
             <strong className="app-version">Version {APP_VERSION}</strong>
             <output className="app-update-status">
               {labels[update.status]}
@@ -79,11 +81,11 @@ export function AppMaintenance({
             </button>
             {update.status === 'available' && (
               <button
-                className="primary-button"
+                className="primary-button update-apply-button"
                 disabled={busy}
                 onClick={() => void run(update.apply, '')}
               >
-                Jetzt aktualisieren
+                <Download size={20} aria-hidden="true" /> Jetzt aktualisieren
               </button>
             )}
             <p>

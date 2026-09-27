@@ -154,6 +154,7 @@ export type ShoppingItem = {
 };
 
 export type AppData = {
+  enabledMealSlots?: MealSlot[];
   schemaVersion: typeof APP_SCHEMA_VERSION;
   recipes: Recipe[];
   plan: PlannedDay[];
@@ -389,6 +390,7 @@ export function createEmptyData(): AppData {
     shopping: [],
     onboardingDone: false,
     installedSamplePacks: [],
+    enabledMealSlots: ['Frühstück', 'Mittagessen', 'Abendessen'],
     nutritionSettings: {
       enabled: false,
       automaticEstimates: false,
@@ -1002,11 +1004,25 @@ export function migrateAppData(value: unknown): AppData {
   )
     throw new Error('INVALID_APP_DATA');
 
+  const enabledMealSlots =
+    value.enabledMealSlots === undefined
+      ? [...mealSlots]
+      : expectStringArray(value.enabledMealSlots);
+  if (
+    !enabledMealSlots.length ||
+    enabledMealSlots.length > 3 ||
+    new Set(enabledMealSlots).size !== enabledMealSlots.length ||
+    enabledMealSlots.some((slot) => !mealSlots.includes(slot as MealSlot))
+  )
+    throw new Error('INVALID_APP_DATA');
   return {
     schemaVersion: APP_SCHEMA_VERSION,
     recipes,
     plan,
     shopping,
+    enabledMealSlots: mealSlots.filter((slot) =>
+      enabledMealSlots.includes(slot),
+    ),
     onboardingDone: value.onboardingDone,
     installedSamplePacks,
     nutritionSettings: migrateNutritionSettings(value.nutritionSettings),
