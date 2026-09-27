@@ -1,4 +1,5 @@
 import { addLocalDays, parseLocalDate } from './local-date.ts';
+import { scaledIngredientAmount } from './ingredient-amount.ts';
 import type { AppData, MealSlot, Recipe, ShoppingItem } from './model.ts';
 
 type WeekShoppingInput = Pick<AppData, 'plan' | 'recipes' | 'shopping'>;
@@ -182,7 +183,11 @@ function desiredGroups(input: WeekShoppingInput, weekStart: string) {
         const unit = canonicalUnit(ingredient.unit);
 
         if (parsedAmount === undefined) {
-          const amountLabel = ingredient.amount.trim();
+          const amountLabel = scaledIngredientAmount(
+            ingredient.amount.trim(),
+            scale,
+            ingredient.scaleWithServings,
+          );
           const groupBase = [
             normalizedName,
             'text',
@@ -210,7 +215,11 @@ function desiredGroups(input: WeekShoppingInput, weekStart: string) {
         const groupKey = `number:${stableHash(
           `${normalizedName}\0${unit.key}`,
         )}`;
-        const contribution = roundedAmount(parsedAmount * unit.factor * scale);
+        const contribution = roundedAmount(
+          parsedAmount *
+            unit.factor *
+            (ingredient.scaleWithServings === false ? 1 : scale),
+        );
         if (!Number.isFinite(contribution) || contribution > 1_000_000_000) {
           skippedIngredientCount += 1;
           return;

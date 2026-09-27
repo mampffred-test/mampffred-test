@@ -31,6 +31,37 @@ export function standardRecipeCount(data: AppData): number {
 
 export const STANDARD_RECIPE_PACK = 'mampffred-cannelloni-v1';
 export const CANNELLONI_IMAGE_KEY = 'standard-cannelloni-image-v1';
+export const STANDARD_IMAGE_UPDATE_PACK = 'mampffred-handover-images-v1';
+
+/** One-time image addition for the previously image-free handover recipes. */
+function installHandoverImages(data: AppData): AppData {
+  if (data.installedSamplePacks.includes(STANDARD_IMAGE_UPDATE_PACK))
+    return data;
+  if (data.installedSamplePacks.length >= 100) return data;
+  const handover = additionalStandardRecipes.slice(3);
+  if (!handover.some(({ pack }) => data.installedSamplePacks.includes(pack)))
+    return data;
+  const recipes = data.recipes.map((existing) => {
+    if (existing.imageKey) return existing;
+    const standard = handover.find(
+      ({ recipe, aliases }) =>
+        existing.id === recipe.id ||
+        existing.shareId === recipe.shareId ||
+        aliases.includes(existing.shareId),
+    );
+    if (!standard?.recipe.imageKey) return existing;
+    const { imageFrame: _oldFrame, ...recipe } = existing;
+    return { ...recipe, imageKey: standard.recipe.imageKey };
+  });
+  return {
+    ...data,
+    recipes,
+    installedSamplePacks: [
+      ...data.installedSamplePacks,
+      STANDARD_IMAGE_UPDATE_PACK,
+    ],
+  };
+}
 
 export function createCannelloniRecipe(): Recipe {
   return {
@@ -150,15 +181,36 @@ export function installStandardRecipes(data: AppData): AppData {
       installedSamplePacks: [...next.installedSamplePacks, pack],
     };
   }
-  return next;
+  next = installHandoverImages(next);
+  // Replace only our earlier photograph; custom and removed photos stay intact.
+  const previousImage =
+    'standard-vegetarisches-huehnerfrikassee-mit-kraeuterseitlingen-image-v1';
+  if (!next.recipes.some((recipe) => recipe.imageKey === previousImage))
+    return next;
+  return {
+    ...next,
+    recipes: next.recipes.map((recipe) =>
+      recipe.imageKey === previousImage
+        ? {
+            ...recipe,
+            imageKey:
+              'standard-vegetarisches-huehnerfrikassee-mit-kraeuterseitlingen-image-v2',
+          }
+        : recipe,
+    ),
+  };
 }
 
 export function newStandardImageKeys(
   current: AppData,
   next: AppData,
 ): string[] {
-  const existing = new Set(current.recipes.map((recipe) => recipe.id));
+  const existing = new Map(
+    current.recipes.map((recipe) => [recipe.id, recipe.imageKey]),
+  );
   return next.recipes.flatMap((recipe) =>
-    !existing.has(recipe.id) && recipe.imageKey ? [recipe.imageKey] : [],
+    recipe.imageKey && existing.get(recipe.id) !== recipe.imageKey
+      ? [recipe.imageKey]
+      : [],
   );
 }

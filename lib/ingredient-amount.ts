@@ -1,6 +1,14 @@
 /** Keep unspecified amounts and free text intact when changing portions. */
-export function scaledIngredientAmount(value: string, factor: number): string {
+export function scaledIngredientAmount(
+  value: string,
+  factor: number,
+  scaleWithServings = true,
+): string {
+  if (!scaleWithServings) return value;
   const trimmed = value.trim();
+  const range = trimmed.match(/^(\d+(?:[.,]\d+)?)\s*[–-]\s*(\d+(?:[.,]\d+)?)$/);
+  if (range && Number.isFinite(factor) && factor >= 0)
+    return `${scaledIngredientAmount(range[1], factor)}–${scaledIngredientAmount(range[2], factor)}`;
   const normalized = /^\d{1,3}(?:\.\d{3})+$/.test(trimmed)
     ? trimmed.replaceAll('.', '')
     : trimmed.replace(',', '.');

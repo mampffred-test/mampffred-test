@@ -13,16 +13,16 @@ import {
   serializeSharedRecipe,
 } from '../lib/recipe-sharing.ts';
 
-test('neue Nutzer erhalten alle vier Rezepte mit vollständigen JPEG-Bildern', async () => {
+test('neue Nutzer erhalten 21 Rezepte mit vollständigen JPEG-Bildern', async () => {
   const empty = createEmptyData();
   const installed = installStandardRecipes(empty);
-  assert.equal(installed.recipes.length, 4);
-  assert.equal(installed.installedSamplePacks.length, 4);
-  assert.equal(migrateAppData(installed).recipes.length, 4);
+  assert.equal(installed.recipes.length, 21);
+  assert.equal(installed.installedSamplePacks.length, 22);
+  assert.equal(migrateAppData(installed).recipes.length, 21);
   assert.deepEqual(empty.recipes, []);
   const keys = newStandardImageKeys(empty, installed);
   const images = await loadStandardRecipeImages(keys);
-  assert.equal(Object.keys(images).length, 4);
+  assert.equal(Object.keys(images).length, 21);
   for (const key of keys) {
     const image = images[key];
     assert.equal(image.type, 'image/jpeg');
@@ -45,15 +45,15 @@ test('neue Nutzer erhalten alle vier Rezepte mit vollständigen JPEG-Bildern', a
   );
 });
 
-test('Updates ergänzen nur die drei neuen Rezepte und respektieren gelöschte Cannelloni', () => {
+test('Updates ergänzen neue Rezepte und respektieren gelöschte Cannelloni', () => {
   const old = installStandardRecipe(createEmptyData());
   const updated = installStandardRecipes(old);
-  assert.equal(updated.recipes.length, 4);
+  assert.equal(updated.recipes.length, 21);
   assert.strictEqual(updated.recipes[0], old.recipes[0]);
-  assert.equal(newStandardImageKeys(old, updated).length, 3);
+  assert.equal(newStandardImageKeys(old, updated).length, 20);
   const deletedCannelloni = { ...old, recipes: [] };
   const withoutCannelloni = installStandardRecipes(deletedCannelloni);
-  assert.equal(withoutCannelloni.recipes.length, 3);
+  assert.equal(withoutCannelloni.recipes.length, 20);
   assert.ok(
     withoutCannelloni.recipes.every((r) => !r.name.includes('Cannelloni')),
   );
@@ -81,10 +81,10 @@ test('bereits importierte Premium-Rezepte bleiben ohne Duplikate oder Bildübers
   );
   const current = { ...old, recipes: [...old.recipes, ...imported] };
   const next = installStandardRecipes(current);
-  assert.equal(next.recipes.length, 4);
+  assert.equal(next.recipes.length, 21);
   assert.deepEqual(next.recipes, current.recipes);
   assert.deepEqual(newStandardImageKeys(current, next), []);
-  assert.equal(next.installedSamplePacks.length, 4);
+  assert.equal(next.installedSamplePacks.length, 22);
 });
 
 test('ursprüngliche lokale Rezepte behalten ihre eigenen Inhalte', () => {

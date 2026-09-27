@@ -2306,10 +2306,19 @@ function RecipeDetail({
               {recipe.ingredients.map((ingredient, index) => (
                 <div key={`${ingredient.name}-${index}`}>
                   <strong>
-                    {scaledIngredientAmount(ingredient.amount, factor)}
+                    {scaledIngredientAmount(
+                      ingredient.amount,
+                      factor,
+                      ingredient.scaleWithServings,
+                    )}
                   </strong>
                   <span>{ingredient.unit}</span>
-                  <p>{ingredient.name}</p>
+                  <p>
+                    {ingredient.name}
+                    {ingredient.scaleWithServings === false && (
+                      <small> · Menge bleibt gleich</small>
+                    )}
+                  </p>
                 </div>
               ))}
             </div>
@@ -4437,6 +4446,28 @@ function RecipeEditor({
                       />
                     </div>
                   </div>
+                  <label className="ingredient-scaling-toggle">
+                    <input
+                      type="checkbox"
+                      checked={item.scaleWithServings !== false}
+                      aria-label={`Menge von Zutat ${index + 1} an Portionen anpassen`}
+                      onChange={(event) =>
+                        setDraft({
+                          ...draft,
+                          ingredients: draft.ingredients.map(
+                            (entry, itemIndex) =>
+                              itemIndex === index
+                                ? {
+                                    ...entry,
+                                    scaleWithServings: event.target.checked,
+                                  }
+                                : entry,
+                          ),
+                        })
+                      }
+                    />
+                    Menge an Portionen anpassen
+                  </label>
                   {index === 0 && ingredientsError && (
                     <small
                       id="recipe-ingredients-error"
@@ -7077,7 +7108,11 @@ export default function MampffredApp() {
       ),
     );
     const additions = recipe.ingredients.flatMap((ingredient) => {
-      const scaledAmount = scaledIngredientAmount(ingredient.amount, factor);
+      const scaledAmount = scaledIngredientAmount(
+        ingredient.amount,
+        factor,
+        ingredient.scaleWithServings,
+      );
       const name = [scaledAmount, ingredient.unit, ingredient.name]
         .filter(Boolean)
         .join(' ')

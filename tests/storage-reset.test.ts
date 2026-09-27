@@ -70,8 +70,8 @@ test('Reset ersetzt alle persönlichen Metadaten und Bilder erst nach vollständ
   await queueReplaceAllData(fresh, images);
   assert.deepEqual([...stores.app.keys()], ['state']);
   assert.equal(stores.images.has('private-photo'), false);
-  assert.equal(stores.images.size, 4);
-  assert.equal((stores.app.get('state') as typeof fresh).recipes.length, 4);
+  assert.equal(stores.images.size, 21);
+  assert.equal((stores.app.get('state') as typeof fresh).recipes.length, 21);
 });
 
 test('fehlendes Bild oder abgebrochene Transaktion lässt den vorhandenen Datenbestand erhalten', async () => {
@@ -100,5 +100,5 @@ test('vorherige Schreibaufträge können den Reset nicht nachträglich überschr
   await Promise.all([earlier, reset]);
   const saved = stores.app.get('state') as typeof fresh;
   assert.equal(saved.onboardingDone, false);
-  assert.equal(saved.recipes.length, 4);
+  assert.equal(saved.recipes.length, 21);
 });

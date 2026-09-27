@@ -39,7 +39,7 @@ test('mehrere direkte Löschungen lassen sich gemeinsam vollständig rückgängi
   const first = removeRecipe(original, original.recipes[0].id)!;
   const second = removeRecipe(first.next, original.recipes[1].id)!;
   const third = removeRecipe(second.next, original.recipes[3].id)!;
-  assert.equal(third.next.recipes.length, 1);
+  assert.equal(third.next.recipes.length, original.recipes.length - 3);
   assert.equal(third.next.recipeDrafts.length, 0);
   assert.equal(third.next.plan[0].meals.length, 0);
   const removed = [first.removed, second.removed, third.removed];
@@ -54,7 +54,7 @@ test('mehrere direkte Löschungen lassen sich gemeinsam vollständig rückgängi
   assert.ok(removedRecipeImageKeys(removed).includes('draft-image'));
   for (const entry of removed)
     assert.ok(removedRecipeImageKeys(removed).includes(entry.recipe.imageKey!));
-  assert.equal(original.recipes.length, 4);
+  assert.equal(original.recipes.length, 21);
 });
 
 test('Rückgängig behält neue Rezepte, geänderte Entwürfe und neu belegte Mahlzeiten', () => {

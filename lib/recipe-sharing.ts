@@ -34,7 +34,12 @@ type SharedRecipeEnvelope = {
     minutes: number;
     servings: number;
     tags: string[];
-    ingredients: Array<{ amount: string; unit: string; name: string }>;
+    ingredients: Array<{
+      amount: string;
+      unit: string;
+      name: string;
+      scaleWithServings?: boolean;
+    }>;
     steps: string[];
   };
 };
@@ -55,11 +60,14 @@ export function serializeSharedRecipe(recipe: Recipe) {
       minutes: recipe.minutes,
       servings: recipe.servings,
       tags: visibleRecipeTags(recipe),
-      ingredients: recipe.ingredients.map(({ amount, unit, name }) => ({
-        amount,
-        unit,
-        name,
-      })),
+      ingredients: recipe.ingredients.map(
+        ({ amount, unit, name, scaleWithServings }) => ({
+          amount,
+          unit,
+          name,
+          ...(scaleWithServings !== undefined ? { scaleWithServings } : {}),
+        }),
+      ),
       steps: recipe.steps,
     },
   };
@@ -260,7 +268,9 @@ export function formatSharedRecipeText(recipe: Recipe) {
       (ingredient) =>
         `- ${[ingredient.amount, ingredient.unit, ingredient.name]
           .filter(Boolean)
-          .join(' ')}`,
+          .join(
+            ' ',
+          )}${ingredient.scaleWithServings === false ? ' (Menge bleibt bei Portionsänderung gleich)' : ''}`,
     )
     .join('\n');
   const steps = recipe.steps
@@ -404,6 +414,9 @@ export async function parseSharedRecipe(contents: string): Promise<Recipe> {
             amount: sanitizeImportedText(ingredient.amount),
             unit: sanitizeImportedText(ingredient.unit),
             name: sanitizeImportedText(ingredient.name),
+            ...(ingredient.scaleWithServings !== undefined
+              ? { scaleWithServings: ingredient.scaleWithServings }
+              : {}),
           };
         }),
         steps: sanitizeImportedTextList(recipe.steps),

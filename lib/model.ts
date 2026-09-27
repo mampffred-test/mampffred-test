@@ -84,6 +84,8 @@ export type RecipeIngredient = {
   amount: string;
   unit: string;
   name: string;
+  /** Omitted in older recipes: quantities scale with servings by default. */
+  scaleWithServings?: boolean;
   foodLink?: FoodLink;
 };
 
@@ -560,6 +562,11 @@ function migrateRecipe(value: unknown, legacyNutrition: boolean): Recipe {
       const unit = expectString(ingredient.unit);
       const name = expectString(ingredient.name);
       if (
+        ingredient.scaleWithServings !== undefined &&
+        typeof ingredient.scaleWithServings !== 'boolean'
+      )
+        throw new Error('INVALID_APP_DATA');
+      if (
         !ingredientId ||
         ingredientId.length > 200 ||
         amount.length > 100 ||
@@ -572,6 +579,9 @@ function migrateRecipe(value: unknown, legacyNutrition: boolean): Recipe {
         amount,
         unit,
         name,
+        ...(ingredient.scaleWithServings !== undefined
+          ? { scaleWithServings: ingredient.scaleWithServings as boolean }
+          : {}),
         ...(ingredient.foodLink !== undefined
           ? { foodLink: migrateFoodLink(ingredient.foodLink) }
           : {}),

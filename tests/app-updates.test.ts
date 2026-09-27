@@ -85,14 +85,14 @@ test('manuelle Wiederherstellung ergänzt gelöschte Standards, bewahrt eigene R
   };
   const before = { ...original, recipes: [edited, custom] };
   const repaired = restoreStandardRecipes(before);
-  assert.equal(standardRecipeCount(repaired), 4);
-  assert.equal(repaired.recipes.length, 5);
+  assert.equal(standardRecipeCount(repaired), 21);
+  assert.equal(repaired.recipes.length, 22);
   assert.strictEqual(repaired.recipes[0], edited);
   assert.strictEqual(repaired.recipes[1], custom);
 });
 test('ein frischer Datenbestand enthält ausschließlich Standards und keine persönlichen Daten', () => {
   const fresh = installStandardRecipes(createEmptyData());
-  assert.equal(standardRecipeCount(fresh), 4);
+  assert.equal(standardRecipeCount(fresh), 21);
   assert.deepEqual(fresh.plan, []);
   assert.deepEqual(fresh.recipeDrafts, []);
   assert.deepEqual(fresh.customFoods, []);
