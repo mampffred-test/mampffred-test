@@ -580,7 +580,7 @@ function migrateRecipe(value: unknown, legacyNutrition: boolean): Recipe {
         unit,
         name,
         ...(ingredient.scaleWithServings !== undefined
-          ? { scaleWithServings: ingredient.scaleWithServings as boolean }
+          ? { scaleWithServings: ingredient.scaleWithServings }
           : {}),
         ...(ingredient.foodLink !== undefined
           ? { foodLink: migrateFoodLink(ingredient.foodLink) }
