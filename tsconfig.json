@@ -22,7 +22,8 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
-    "components/mampffred-app.tsx",
+    "components/**/*.ts",
+    "components/**/*.tsx",
     "lib/model.ts",
     "lib/storage.ts",
     "lib/backup.ts",

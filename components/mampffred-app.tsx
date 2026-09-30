@@ -7,7 +7,42 @@ import {
 
 import { validateDataUpdate, referencedImageKeys } from '@/lib/data-updates';
 import { MIN_BACKUP_PASSWORD_LENGTH } from '@/lib/backup';
+import { getBackupReminder } from '@/lib/backup-reminder';
 import { FramedImage, ImageFramingEditor } from './image-framing';
+import { IconButton } from './icon-button';
+import {
+  useAnimatedSheetClose,
+  useModalFocus,
+  useSheetSwipeToClose,
+} from './modal-hooks';
+import {
+  RecipeImage,
+  RecipeImageRequestContext,
+  THUMBNAIL_CACHE,
+  assetUrl,
+} from './recipe-image';
+import { TodayView } from './today-view';
+import {
+  MealSlotIcon,
+  TagIcon,
+  isoWeekNumber,
+  portions,
+  weekLabel,
+} from './plan-ui';
+import { WeekView } from './week-view';
+import { QuickPlanSheet } from './quick-plan-sheet';
+import {
+  applyPlanChanges,
+  freeSlots,
+  preferredServings,
+  recipesForSlot,
+  revertPlanChanges,
+  seededRandom,
+  weekDates,
+  type FreeSlot,
+  type PlanChange,
+  type PlanProposal,
+} from '@/lib/meal-planning';
 import { UnitPicker } from './unit-picker';
 import { RecipeStepsEditor } from './recipe-steps-editor';
 import { useAppUpdate } from './use-app-update';
@@ -34,7 +69,6 @@ import {
   CalendarDays,
   Carrot,
   Check,
-  CircleAlert,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -72,9 +106,7 @@ import {
   X,
 } from 'lucide-react';
 import {
-  createContext,
   useCallback,
-  useContext,
   useDeferredValue,
   useEffect,
   useLayoutEffect,
@@ -89,13 +121,13 @@ import {
   decryptBackup,
   encryptBackup,
 } from '@/lib/backup';
-import { getBackupReminder } from '@/lib/backup-reminder';
 import type {
   AppData,
   CustomFood,
   FoodOverride,
   MealSlot,
   NutritionSettings,
+  PlannedMeal,
   Recipe,
   RecipeDraft,
   RecipeIngredient,
@@ -124,7 +156,6 @@ import {
   todayLocal,
 } from '@/lib/local-date';
 import { tabTransitionDirection, type AppTab } from '@/lib/navigation-motion';
-import { shouldDismissSheet } from '@/lib/sheet-gesture';
 import {
   removeShoppingItems,
   restoreShoppingItems,
@@ -134,11 +165,7 @@ import {
   appTabFromHistoryState,
   createAppHistoryState,
 } from '@/lib/ui-history';
-import {
-  aggregateNutritionDay,
-  aggregateNutritionWeek,
-  suggestRecipesForWeek,
-} from '@/lib/nutrition';
+import { aggregateNutritionDay } from '@/lib/nutrition';
 import {
   hasMeaningfulRecipeDraft,
   removeRecipeDraft,
@@ -217,14 +244,7 @@ const shortDate = new Intl.DateTimeFormat('de-DE', {
   day: 'numeric',
   month: 'short',
 });
-const shortTime = new Intl.DateTimeFormat('de-DE', {
-  hour: '2-digit',
-  minute: '2-digit',
-});
-const weekday = new Intl.DateTimeFormat('de-DE', { weekday: 'short' });
-const monthShort = new Intl.DateTimeFormat('de-DE', { month: 'short' });
 const fromIso = parseLocalDate;
-const assetUrl = (path: string) => `${import.meta.env.BASE_URL}${path}`;
 const recipeShareBaseUrl = () =>
   new URL(import.meta.env.BASE_URL, window.location.origin).href;
 const sharePreparationMessage = (error: unknown) =>
@@ -233,10 +253,6 @@ const sharePreparationMessage = (error: unknown) =>
     error.message === 'SHARED_RECIPE_TOO_LARGE')
     ? 'Dieses Rezept ist zu umfangreich für einen Rezeptlink. Sichere es stattdessen als Rezeptdatei.'
     : 'Das Rezept konnte gerade nicht geteilt werden.';
-
-const RecipeImageRequestContext = createContext<(key: string) => void>(
-  () => undefined,
-);
 
 async function calculateWithBundledFoodData(
   recipe: Recipe,
@@ -261,13 +277,6 @@ async function calculateWithBundledFoodData(
     ),
   };
 }
-const greeting = (now: Date) => {
-  const hour = now.getHours();
-  if (hour < 11) return 'Guten Morgen! ☀️';
-  if (hour < 18) return 'Guten Tag! 🌿';
-  return 'Guten Abend! 🌙';
-};
-const modalStack: HTMLElement[] = [];
 
 function Image({
   priority,
@@ -280,273 +289,6 @@ function Image({
   return (
     <img {...props} alt={alt} loading={priority ? 'eager' : props.loading} />
   );
-}
-
-function RecipeImage({
-  recipe,
-  imageUrls,
-  className = '',
-}: {
-  recipe: Recipe;
-  imageUrls: Record<string, string>;
-  className?: string;
-}) {
-  const requestImage = useContext(RecipeImageRequestContext);
-  const placeholderRef = useRef<HTMLDivElement>(null);
-  const storedImageUrl = recipe.imageKey
-    ? imageUrls[recipe.imageKey]
-    : undefined;
-  useEffect(() => {
-    if (!recipe.imageKey || storedImageUrl) return;
-    const placeholder = placeholderRef.current;
-    if (!placeholder || !('IntersectionObserver' in window)) {
-      requestImage(recipe.imageKey);
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
-        requestImage(recipe.imageKey!);
-        observer.disconnect();
-      },
-      { rootMargin: '160px 0px' },
-    );
-    observer.observe(placeholder);
-    return () => observer.disconnect();
-  }, [recipe.imageKey, requestImage, storedImageUrl]);
-
-  if (storedImageUrl)
-    return (
-      <FramedImage
-        className={`recipe-photo ${className}`}
-        src={storedImageUrl}
-        alt={`Foto von ${recipe.name}`}
-        frame={recipe.imageFrame}
-      />
-    );
-  return (
-    <div
-      ref={placeholderRef}
-      className={`recipe-photo recipe-sprite ${className}`}
-      role="img"
-      aria-label={`Foto von ${recipe.name}`}
-      style={
-        {
-          '--cell-x': recipe.imageCell % 3,
-          '--cell-y': Math.floor(recipe.imageCell / 3),
-          '--recipe-sprite-url': `url("${assetUrl('assets/recipe-sprite-optimized.jpg')}")`,
-        } as React.CSSProperties
-      }
-    />
-  );
-}
-
-function IconButton({
-  label,
-  children,
-  onClick,
-  className = '',
-  disabled = false,
-}: {
-  label: string;
-  children: React.ReactNode;
-  onClick?: () => void;
-  className?: string;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      className={`icon-button ${className}`}
-      aria-label={label}
-      onClick={onClick}
-      disabled={disabled}
-    >
-      {children}
-    </button>
-  );
-}
-
-function useModalFocus<T extends HTMLElement>(
-  onClose: () => void,
-  initialFocusSelector?: string,
-) {
-  const ref = useRef<T>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  useEffect(() => {
-    const dialog = ref.current;
-    const previous = document.activeElement as HTMLElement | null;
-    if (!dialog) return;
-    const focusable = () =>
-      Array.from(
-        dialog.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      ).filter(
-        (element) =>
-          !element.closest('[hidden], [inert]') &&
-          element.getClientRects().length > 0,
-      );
-    modalStack.push(dialog);
-    const preferred = initialFocusSelector
-      ? dialog.querySelector<HTMLElement>(initialFocusSelector)
-      : undefined;
-    (preferred ?? focusable()[0])?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (modalStack.at(-1) !== dialog) return;
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        onCloseRef.current();
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      const elements = focusable();
-      if (!elements.length) return;
-      const first = elements[0];
-      const last = elements[elements.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-      const index = modalStack.lastIndexOf(dialog);
-      if (index >= 0) modalStack.splice(index, 1);
-      previous?.focus();
-    };
-  }, [initialFocusSelector]);
-  return ref;
-}
-
-function useSheetSwipeToClose(onClose: () => void) {
-  const onCloseRef = useRef(onClose);
-  const gestureRef = useRef<
-    | {
-        pointerId: number;
-        startY: number;
-        lastY: number;
-        startedAt: number;
-        sheet: HTMLElement;
-      }
-    | undefined
-  >(undefined);
-  const timerRef = useRef<number | undefined>(undefined);
-  const gestureTimeoutRef = useRef<number | undefined>(undefined);
-  onCloseRef.current = onClose;
-
-  useEffect(
-    () => () => {
-      if (timerRef.current) window.clearTimeout(timerRef.current);
-      if (gestureTimeoutRef.current)
-        window.clearTimeout(gestureTimeoutRef.current);
-    },
-    [],
-  );
-
-  function finishGesture(pointerId: number, cancelled = false) {
-    const gesture = gestureRef.current;
-    if (!gesture || gesture.pointerId !== pointerId) return;
-    if (gestureTimeoutRef.current)
-      window.clearTimeout(gestureTimeoutRef.current);
-    gestureTimeoutRef.current = undefined;
-    gestureRef.current = undefined;
-    const distance = Math.max(0, gesture.lastY - gesture.startY);
-    const shouldClose =
-      !cancelled &&
-      shouldDismissSheet({
-        distance,
-        elapsedMs: performance.now() - gesture.startedAt,
-        viewportHeight: window.visualViewport?.height ?? window.innerHeight,
-      });
-    gesture.sheet.classList.remove('sheet-dragging');
-    gesture.sheet.classList.add('sheet-snapping');
-    gesture.sheet.style.setProperty(
-      '--sheet-drag',
-      shouldClose ? 'calc(100dvh + 40px)' : '0px',
-    );
-    timerRef.current = window.setTimeout(
-      () => {
-        gesture.sheet.classList.remove('sheet-snapping');
-        gesture.sheet.style.removeProperty('--sheet-drag');
-        if (shouldClose) onCloseRef.current();
-      },
-      shouldClose ? 210 : 280,
-    );
-  }
-
-  return {
-    onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
-      if (event.button !== 0) return;
-      const sheet = event.currentTarget.closest<HTMLElement>('.swipe-sheet');
-      if (!sheet) return;
-      if (timerRef.current) window.clearTimeout(timerRef.current);
-      gestureRef.current = {
-        pointerId: event.pointerId,
-        startY: event.clientY,
-        lastY: event.clientY,
-        startedAt: performance.now(),
-        sheet,
-      };
-      gestureTimeoutRef.current = window.setTimeout(
-        () => finishGesture(event.pointerId, true),
-        2_500,
-      );
-      sheet.classList.remove('sheet-snapping');
-      sheet.classList.add('sheet-dragging');
-      event.currentTarget.setPointerCapture(event.pointerId);
-    },
-    onPointerMove(event: React.PointerEvent<HTMLDivElement>) {
-      const gesture = gestureRef.current;
-      if (!gesture || gesture.pointerId !== event.pointerId) return;
-      gesture.lastY = event.clientY;
-      const offset = Math.max(0, event.clientY - gesture.startY);
-      gesture.sheet.style.setProperty(
-        '--sheet-drag',
-        `${Math.min(offset, window.innerHeight * 0.8)}px`,
-      );
-    },
-    onPointerUp(event: React.PointerEvent<HTMLDivElement>) {
-      finishGesture(event.pointerId);
-    },
-    onPointerCancel(event: React.PointerEvent<HTMLDivElement>) {
-      finishGesture(event.pointerId, true);
-    },
-    onLostPointerCapture(event: React.PointerEvent<HTMLDivElement>) {
-      finishGesture(event.pointerId, true);
-    },
-  };
-}
-
-function useAnimatedSheetClose(onClose: () => void) {
-  const [closing, setClosing] = useState(false);
-  const closingRef = useRef(false);
-  const onCloseRef = useRef(onClose);
-  const timerRef = useRef<number | undefined>(undefined);
-  onCloseRef.current = onClose;
-  useEffect(
-    () => () => {
-      if (timerRef.current) window.clearTimeout(timerRef.current);
-    },
-    [],
-  );
-  const close = useCallback(() => {
-    if (closingRef.current) return;
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      onCloseRef.current();
-      return;
-    }
-    closingRef.current = true;
-    setClosing(true);
-    timerRef.current = window.setTimeout(() => onCloseRef.current(), 190);
-  }, []);
-  return { close, closing };
 }
 
 function Header({
@@ -579,732 +321,6 @@ function Header({
   );
 }
 
-function MealCard({
-  slot,
-  recipe,
-  servings,
-  imageUrls,
-  onOpen,
-}: {
-  slot: MealSlot;
-  recipe: Recipe;
-  servings: number;
-  imageUrls: Record<string, string>;
-  onOpen: () => void;
-}) {
-  const tag = visibleRecipeTags(recipe)[0];
-  return (
-    <button className="meal-card" onClick={onOpen}>
-      <div className="meal-copy">
-        <span className="meal-slot">
-          {slot === 'Mittagessen' ? (
-            <Utensils size={17} />
-          ) : (
-            <CookingPot size={17} />
-          )}
-          {slot}
-        </span>
-        <strong>{recipe.name}</strong>
-        <small>
-          <Users size={13} /> {servings} Portionen <Clock3 size={13} />{' '}
-          {recipe.minutes} Min.
-        </small>
-        {tag && (
-          <span className="meal-tag">
-            <Leaf size={13} /> {tag}
-          </span>
-        )}
-      </div>
-      <RecipeImage
-        recipe={recipe}
-        imageUrls={imageUrls}
-        className="meal-image"
-      />
-      <span className="meal-chevron" aria-hidden="true">
-        <ChevronRight size={19} />
-      </span>
-    </button>
-  );
-}
-
-function TodayView({
-  data,
-  now,
-  imageUrls,
-  onRecipe,
-  onSettings,
-  onBackup,
-  onPlan,
-  onAddRecipe,
-  onAddSamples,
-}: {
-  data: AppData;
-  now: Date;
-  imageUrls: Record<string, string>;
-  onRecipe: (recipe: Recipe) => void;
-  onSettings: () => void;
-  onBackup: () => void;
-  onPlan: (slot?: MealSlot) => void;
-  onAddRecipe: () => void;
-  onAddSamples: () => void;
-}) {
-  const mealSlots = getEnabledMealSlots(data);
-  const visiblePlan = visibleMealPlan(data);
-  const todayIso = todayLocal(now);
-  const lastBackup = data.lastBackup ? new Date(data.lastBackup) : undefined;
-  const lastBackupDay = lastBackup
-    ? todayLocal(lastBackup) === todayIso
-      ? 'Heute'
-      : shortDate.format(lastBackup)
-    : undefined;
-  const backupReminder = getBackupReminder(data.lastBackup, now);
-  const current = visiblePlan.find((day) => day.date === todayIso);
-  const meals =
-    current?.meals
-      .toSorted(
-        (left, right) =>
-          mealSlots.indexOf(left.slot) - mealSlots.indexOf(right.slot),
-      )
-      .flatMap((meal) => {
-        const recipe = data.recipes.find((item) => item.id === meal.recipeId);
-        return recipe ? [{ ...meal, recipe }] : [];
-      }) ?? [];
-  return (
-    <div
-      className={`screen-content today-view ${mealSlots.length === 1 ? 'single-meal-mode' : ''}`}
-    >
-      <Header
-        title={greeting(now)}
-        subtitle={localeDate.format(now)}
-        leading={
-          meals.length > 0 ? (
-            <Image
-              className="header-mascot"
-              src={assetUrl('assets/mampffred-mascot-small.png')}
-              width={46}
-              height={52}
-              alt="Mampffred"
-              priority
-            />
-          ) : undefined
-        }
-        action={
-          <IconButton label="Einstellungen öffnen" onClick={onSettings}>
-            <Settings size={22} />
-          </IconButton>
-        }
-      />
-      <section>
-        <h2>Heute gibt&apos;s</h2>
-        <p className="section-subtitle">
-          {mealSlots.length === 1
-            ? `Dein ${mealSlots[0]} für heute.`
-            : 'Deine geplanten Mahlzeiten für einen genussvollen Tag.'}
-        </p>
-        {meals.length ? (
-          <>
-            <div className="meal-list">
-              {meals.map(({ slot, recipe, servings }) => (
-                <MealCard
-                  key={slot}
-                  slot={slot}
-                  recipe={recipe}
-                  servings={servings}
-                  imageUrls={imageUrls}
-                  onOpen={() => onRecipe(recipe)}
-                />
-              ))}
-              {mealSlots
-                .filter((slot) => !meals.some((meal) => meal.slot === slot))
-                .map((slot) => (
-                  <button
-                    type="button"
-                    className="meal-card meal-card-empty"
-                    key={slot}
-                    onClick={() => onPlan(slot)}
-                  >
-                    <span className="meal-empty-icon">
-                      <Plus size={21} />
-                    </span>
-                    <span>
-                      <small>{slot}</small>
-                      <strong>Mahlzeit planen</strong>
-                    </span>
-                    <ChevronRight size={19} />
-                  </button>
-                ))}
-            </div>
-            <div className="today-summary" aria-label="Tagesübersicht">
-              <span>
-                <Utensils size={19} />
-                <strong>{meals.length}</strong>
-                <small>{meals.length === 1 ? 'Mahlzeit' : 'Mahlzeiten'}</small>
-              </span>
-              <span>
-                <Leaf size={19} />
-                <strong>
-                  {meals.length === mealSlots.length ? 'Plan steht' : 'Im Plan'}
-                </strong>
-                <small>für heute</small>
-              </span>
-              <span>
-                <Heart size={19} />
-                <strong>Lecker</strong>
-                <small>Guten Appetit!</small>
-              </span>
-            </div>
-          </>
-        ) : (
-          <div className="empty-state">
-            <Image
-              src={assetUrl('assets/mampffred-mascot-small.png')}
-              width={170}
-              height={200}
-              alt="Mampffred, der Brokkoli-Koch"
-              priority
-            />
-            <h2>
-              {data.recipes.length
-                ? 'Bei Mampffred ist noch nichts auf dem Teller.'
-                : 'Deine Rezeptsammlung ist noch leer.'}
-            </h2>
-            <p>
-              {data.recipes.length
-                ? 'Plane eine Mahlzeit aus deinen Rezepten.'
-                : 'Lege dein erstes Rezept an oder probiere unverbindlich unsere Beispiele aus.'}
-            </p>
-            <div className="empty-actions">
-              <button
-                className="primary-button"
-                onClick={data.recipes.length ? () => onPlan() : onAddRecipe}
-              >
-                {data.recipes.length
-                  ? 'Mahlzeit planen'
-                  : 'Erstes Rezept anlegen'}
-              </button>
-              {data.recipes.length ? (
-                <button className="secondary-button" onClick={onAddRecipe}>
-                  Rezept anlegen
-                </button>
-              ) : (
-                <button className="secondary-button" onClick={onAddSamples}>
-                  Beispielrezepte ausprobieren
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-      </section>
-      <section className={`backup-card is-${backupReminder.kind}`}>
-        <div className="backup-card-copy">
-          <span className="backup-card-icon" aria-hidden="true">
-            <ShieldCheck size={29} />
-          </span>
-          <span>
-            <strong>{backupReminder.title}</strong>
-            <small>{backupReminder.description}</small>
-          </span>
-        </div>
-        <span className="backup-card-leaves" aria-hidden="true">
-          <img src={assetUrl('assets/basil-card-leaves.png')} alt="" />
-        </span>
-        <button onClick={onBackup}>
-          <strong>{backupReminder.buttonLabel}</strong>
-          <ChevronRight size={18} />
-        </button>
-        <small className="backup-card-status" aria-live="polite">
-          <span className="backup-card-status-icon" aria-hidden="true">
-            {backupReminder.kind === 'missing' ? (
-              <CircleAlert size={14} />
-            ) : backupReminder.kind === 'stale' ? (
-              <Clock3 size={13} />
-            ) : (
-              <Check size={11} strokeWidth={3} />
-            )}
-          </span>
-          {backupReminder.kind === 'missing'
-            ? 'Noch keine Sicherungsdatei erstellt'
-            : lastBackup && lastBackupDay
-              ? `Zuletzt gesichert: ${lastBackupDay}, ${shortTime.format(lastBackup)} Uhr`
-              : 'Sicherungszeitpunkt nicht verfügbar'}
-        </small>
-      </section>
-    </div>
-  );
-}
-
-function WeekView({
-  data,
-  imageUrls,
-  weekStart,
-  onWeekStart,
-  onAdd,
-  onCreateShopping,
-  onNutritionSetup,
-  onDismissNutrition,
-  onOpenRecipe,
-  onEditRecipes,
-  onOpenDay,
-}: {
-  data: AppData;
-  imageUrls: Record<string, string>;
-  weekStart: string;
-  onWeekStart: (date: string) => void;
-  onAdd: (date: string, slot: MealSlot) => void;
-  onCreateShopping: () => void;
-  onNutritionSetup: () => void;
-  onDismissNutrition: () => void;
-  onOpenRecipe: (recipe: Recipe) => void;
-  onEditRecipes: (recipes: Recipe[]) => void;
-  onOpenDay: (date: string) => void;
-}) {
-  const mealSlots = getEnabledMealSlots(data);
-  const visiblePlan = visibleMealPlan(data);
-  const today = todayLocal();
-  const days = Array.from({ length: 7 }, (_, index) => {
-    const date = addLocalDays(weekStart, index);
-    return visiblePlan.find((day) => day.date === date) ?? { date, meals: [] };
-  });
-  const first = fromIso(days[0].date);
-  const last = fromIso(days[6].date);
-  const isCurrentWeek = weekStart === startOfLocalWeek();
-  const [selectedDate, setSelectedDate] = useState(() =>
-    days.some((day) => day.date === today) ? today : days[0].date,
-  );
-  const dayStripRef = useRef<HTMLElement>(null);
-  const selectableDays = Array.from({ length: 21 }, (_, index) => {
-    const date = addLocalDays(weekStart, index - 7);
-    return visiblePlan.find((day) => day.date === date) ?? { date, meals: [] };
-  });
-  useEffect(() => {
-    const weekEnd = addLocalDays(weekStart, 6);
-    setSelectedDate((current) => {
-      if (current >= weekStart && current <= weekEnd) return current;
-      return today >= weekStart && today <= weekEnd ? today : weekStart;
-    });
-  }, [weekStart, today]);
-  useEffect(() => {
-    dayStripRef.current
-      ?.querySelector<HTMLElement>('[aria-pressed="true"]')
-      ?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'nearest',
-        inline: 'center',
-      });
-  }, [selectedDate, weekStart]);
-  const plannedMealCount = days.reduce(
-    (total, day) => total + day.meals.length,
-    0,
-  );
-  const selectedDay = days.find((day) => day.date === selectedDate) ?? days[0];
-  const orderedDays = [
-    selectedDay,
-    ...days.filter((day) => day.date !== selectedDay.date),
-  ];
-  const selectedMeals = mealSlots.flatMap((slot) => {
-    const meal = selectedDay.meals.find((entry) => entry.slot === slot);
-    const recipe = data.recipes.find((entry) => entry.id === meal?.recipeId);
-    return meal && recipe ? [{ meal, recipe }] : [];
-  });
-  const selectedServings = selectedMeals.reduce(
-    (total, entry) => total + entry.meal.servings,
-    0,
-  );
-  const weeklyNutrition = aggregateNutritionWeek(data, weekStart);
-  const protein = weeklyNutrition.nutrients.proteinG;
-  const proteinGoal = data.nutritionSettings.goals.find(
-    (goal) =>
-      goal.enabled && goal.period === 'week' && goal.nutrient === 'proteinG',
-  );
-  const suggestions =
-    addLocalDays(weekStart, 6) < today
-      ? []
-      : suggestRecipesForWeek(data, weeklyNutrition).flatMap((suggestion) => {
-          const recipe = data.recipes.find(
-            (item) => item.id === suggestion.recipeId,
-          );
-          return recipe ? [{ recipe, suggestion }] : [];
-        });
-  const missingProteinRecipes = [
-    ...new Map(
-      days
-        .flatMap((day) => day.meals)
-        .flatMap((meal) => {
-          const recipe = data.recipes.find((item) => item.id === meal.recipeId);
-          return recipe && !recipe.nutrition?.wholeRecipe.proteinG
-            ? [[recipe.id, recipe] as const]
-            : [];
-        }),
-    ).values(),
-  ];
-  return (
-    <div
-      className={`screen-content week-view ${mealSlots.length === 1 ? 'single-meal-mode' : ''}`}
-    >
-      <header className="week-hero">
-        <div className="week-hero-copy">
-          <h1>Deine Woche</h1>
-          <p>Dein Essensplan auf einen Blick</p>
-        </div>
-        <div className="week-picker">
-          <IconButton
-            label="Vorherige Woche"
-            onClick={() => onWeekStart(addLocalDays(weekStart, -7))}
-          >
-            <ChevronLeft size={21} />
-          </IconButton>
-          <button
-            type="button"
-            className="week-date-pill"
-            onClick={() => onWeekStart(startOfLocalWeek())}
-            disabled={isCurrentWeek}
-            aria-label={
-              isCurrentWeek
-                ? `Aktuelle Woche: ${shortDate.format(first)} bis ${shortDate.format(last)}`
-                : `Zur aktuellen Woche. Angezeigt: ${shortDate.format(first)} bis ${shortDate.format(last)}`
-            }
-          >
-            <CalendarDays size={19} aria-hidden="true" />
-            <strong>
-              {shortDate.format(first)} – {shortDate.format(last)}
-            </strong>
-          </button>
-          <IconButton
-            label="Nächste Woche"
-            onClick={() => onWeekStart(addLocalDays(weekStart, 7))}
-          >
-            <ChevronRight size={21} />
-          </IconButton>
-        </div>
-      </header>
-
-      <nav
-        ref={dayStripRef}
-        className="week-day-strip"
-        aria-label="Tage auswählen; horizontal wischen für weitere Tage"
-      >
-        {selectableDays.map((day) => {
-          const date = fromIso(day.date);
-          const isToday = day.date === today;
-          const selected = day.date === selectedDate;
-          const isVisibleWeek = days.some((item) => item.date === day.date);
-          return (
-            <button
-              type="button"
-              className={`${selected ? 'is-selected' : ''} ${isVisibleWeek ? '' : 'is-adjacent-week'}`}
-              aria-current={isToday ? 'date' : undefined}
-              aria-pressed={selected}
-              aria-label={`${isToday ? 'Heute, ' : ''}${localeDate.format(date)} anzeigen`}
-              key={day.date}
-              onClick={() => {
-                setSelectedDate(day.date);
-                const nextWeekStart = startOfLocalWeek(date);
-                if (nextWeekStart !== weekStart) onWeekStart(nextWeekStart);
-              }}
-            >
-              <span>{weekday.format(date).replace('.', '')}</span>
-              <strong>{date.getDate()}</strong>
-              {isToday && !selected && <i aria-hidden="true" />}
-            </button>
-          );
-        })}
-      </nav>
-
-      <section className="week-focus-summary" aria-live="polite">
-        <Image
-          src={assetUrl('assets/mampffred-mascot-small.png')}
-          width={58}
-          height={66}
-          alt="Mampffred"
-        />
-        <div>
-          <strong>
-            {selectedDay.date === today ? 'Heute: ' : ''}
-            {localeDate.format(fromIso(selectedDay.date))}
-          </strong>
-          <span>
-            {selectedMeals.length
-              ? 'Dein Tagesplan auf einen Blick.'
-              : 'Noch frei für deine Lieblingsgerichte.'}
-          </span>
-        </div>
-        <dl>
-          <div>
-            <dt>Mahlzeiten</dt>
-            <dd>{selectedMeals.length}</dd>
-          </div>
-          <div>
-            <dt>Portionen</dt>
-            <dd>{selectedServings}</dd>
-          </div>
-        </dl>
-      </section>
-
-      <div className="week-list">
-        {orderedDays.map((day) => {
-          const isToday = day.date === today;
-          const isSelected = day.date === selectedDay.date;
-          const date = fromIso(day.date);
-          const formattedDate = localeDate.format(date);
-          const meals = mealSlots.map((slot) => {
-            const meal = day.meals.find((item) => item.slot === slot);
-            return {
-              slot,
-              meal,
-              recipe: data.recipes.find((item) => item.id === meal?.recipeId),
-            };
-          });
-
-          if (!isSelected)
-            return (
-              <button
-                type="button"
-                className={`week-compact-day ${isToday ? 'is-today' : ''}`}
-                aria-label={`${isToday ? 'Heute, ' : ''}${formattedDate} im Detail öffnen`}
-                id={`week-day-${day.date}`}
-                key={day.date}
-                onClick={() => onOpenDay(day.date)}
-              >
-                <span className="compact-day-date">
-                  <small>{weekday.format(date).replace('.', '')}</small>
-                  <strong>{date.getDate()}</strong>
-                  <small>{monthShort.format(date)}</small>
-                </span>
-                <span className="compact-meal-icons" aria-hidden="true">
-                  {meals.map(({ slot }) => (
-                    <span key={slot}>
-                      {slot === 'Mittagessen' ? (
-                        <Utensils size={17} />
-                      ) : (
-                        <CookingPot size={17} />
-                      )}
-                    </span>
-                  ))}
-                </span>
-                <span className="compact-meal-names">
-                  {meals
-                    .map(({ recipe }) => recipe?.name ?? 'Mahlzeit planen')
-                    .join(', ')}
-                </span>
-                <span className="compact-meal-images" aria-hidden="true">
-                  {meals.map(({ slot, recipe }) =>
-                    recipe ? (
-                      <RecipeImage
-                        key={slot}
-                        recipe={recipe}
-                        imageUrls={imageUrls}
-                        className="week-compact-image"
-                      />
-                    ) : (
-                      <span className="week-compact-empty" key={slot}>
-                        <Plus size={17} />
-                      </span>
-                    ),
-                  )}
-                </span>
-                <ChevronRight size={18} aria-hidden="true" />
-              </button>
-            );
-
-          return (
-            <article
-              className={`day-card is-featured ${isToday ? 'is-today' : ''}`}
-              aria-current={isToday ? 'date' : undefined}
-              id={`week-day-${day.date}`}
-              key={day.date}
-            >
-              <button
-                type="button"
-                className="day-date"
-                aria-label={`${isToday ? 'Heute, ' : ''}${formattedDate} im Detail öffnen`}
-                onClick={() => onOpenDay(day.date)}
-              >
-                <span>{weekday.format(date).replace('.', '')}</span>
-                <strong>{date.getDate()}</strong>
-                <span>{monthShort.format(date)}</span>
-                {isToday && <small>Heute</small>}
-                <em>Guten Appetit!</em>
-              </button>
-              <div className="day-meals">
-                {meals.map(({ slot, meal, recipe }) => (
-                  <button
-                    key={slot}
-                    className={recipe ? 'is-planned' : 'is-empty'}
-                    aria-label={
-                      recipe
-                        ? `${slot}: ${recipe.name}, ${meal?.servings} Portionen. Rezept öffnen`
-                        : `${slot}: Mahlzeit planen`
-                    }
-                    onClick={() =>
-                      recipe ? onOpenRecipe(recipe) : onAdd(day.date, slot)
-                    }
-                  >
-                    <span className="week-meal-icon" aria-hidden="true">
-                      {slot === 'Mittagessen' ? (
-                        <Utensils size={20} />
-                      ) : (
-                        <CookingPot size={20} />
-                      )}
-                    </span>
-                    <span className="week-meal-copy">
-                      <small>
-                        {slot}
-                        {recipe ? ` · ${recipe.minutes} Min.` : ''}
-                      </small>
-                      <strong>{recipe?.name ?? 'Mahlzeit planen'}</strong>
-                      {meal && <em>{meal.servings} Portionen</em>}
-                    </span>
-                    {recipe ? (
-                      <RecipeImage
-                        recipe={recipe}
-                        imageUrls={imageUrls}
-                        className="week-meal-image"
-                      />
-                    ) : (
-                      <span className="week-empty-image" aria-hidden="true">
-                        <Plus size={17} />
-                      </span>
-                    )}
-                    <ChevronRight size={17} aria-hidden="true" />
-                  </button>
-                ))}
-              </div>
-            </article>
-          );
-        })}
-      </div>
-      <p className="week-signoff">
-        <Leaf size={17} /> Gute Planung. Eine entspannte Woche.
-      </p>
-      {plannedMealCount > 0 &&
-        !data.nutritionSettings.enabled &&
-        !data.nutritionSettings.promptDismissed && (
-          <section className="nutrition-card nutrition-opt-in">
-            <div>
-              <strong>Protein im Wochenplan einschätzen</strong>
-              <p>
-                Optional und nur lokal: aus Gewichtsangaben schätzen oder eigene
-                Werte verwenden. Keine medizinische Bewertung.
-              </p>
-            </div>
-            <div className="nutrition-opt-in-actions">
-              <button type="button" onClick={onNutritionSetup}>
-                Einrichten
-              </button>
-              <button type="button" onClick={onDismissNutrition}>
-                Nicht jetzt
-              </button>
-            </div>
-          </section>
-        )}
-      {data.nutritionSettings.enabled && (
-        <section
-          className="nutrition-card"
-          aria-labelledby="protein-plan-title"
-        >
-          <div className="nutrition-heading">
-            <div>
-              <strong id="protein-plan-title">Protein im Plan</strong>
-              <small>
-                {protein.coveredMeals} von {protein.totalMeals} Mahlzeiten
-                einschätzbar
-              </small>
-            </div>
-            <button type="button" onClick={onNutritionSetup}>
-              Anpassen
-            </button>
-          </div>
-          {protein.totalMeals === 0 ? (
-            <p>Noch keine Mahlzeiten geplant.</p>
-          ) : protein.coverage < 1 || protein.value === null ? (
-            <>
-              <p>
-                Für {missingProteinRecipes.length}{' '}
-                {missingProteinRecipes.length === 1
-                  ? 'geplantes Rezept fehlt'
-                  : 'geplante Rezepte fehlen'}{' '}
-                noch vollständige Nährwerte. Deshalb vergleichen wir den Plan
-                noch nicht mit deinem Wochen-Planwert.
-              </p>
-              {missingProteinRecipes[0] && (
-                <button
-                  type="button"
-                  className="nutrition-missing-action"
-                  onClick={() => onEditRecipes(missingProteinRecipes)}
-                >
-                  {data.nutritionSettings.automaticEstimates
-                    ? 'Zuordnungen prüfen'
-                    : 'Eigene Werte ergänzen'}
-                </button>
-              )}
-            </>
-          ) : (
-            <>
-              <p>
-                In dieser Woche sind aus deinem Plan ca.{' '}
-                <strong>{Math.round(protein.value)} g</strong> Protein erfasst.
-              </p>
-              {proteinGoal?.minimum ? (
-                protein.value < proteinGoal.minimum ? (
-                  <p>
-                    Bis zu deinem selbst gesetzten Wochen-Planwert sind noch ca.{' '}
-                    <strong>
-                      {Math.round(proteinGoal.minimum - protein.value)} g
-                    </strong>{' '}
-                    offen.
-                  </p>
-                ) : (
-                  <p>
-                    Aus geplanten Mahlzeiten: ca. {Math.round(protein.value)} g.
-                    Dein Wochen-Planwert: {Math.round(proteinGoal.minimum)} g.
-                  </p>
-                )
-              ) : (
-                <p>Du hast noch keinen eigenen Wochen-Planwert festgelegt.</p>
-              )}
-            </>
-          )}
-          {suggestions.length > 0 && (
-            <div className="nutrition-suggestions">
-              <strong>Rezepte, die dazu passen könnten</strong>
-              {suggestions.map(({ recipe, suggestion }) => (
-                <button
-                  type="button"
-                  key={recipe.id}
-                  onClick={() => onOpenRecipe(recipe)}
-                >
-                  <span>{recipe.name}</span>
-                  <small>
-                    ca. {Math.round(suggestion.contributionPerServing)} g pro
-                    Portion ·{' '}
-                    {suggestion.quality === 'estimated'
-                      ? 'aus Zutaten geschätzt'
-                      : 'eigene Angabe'}
-                  </small>
-                  <ChevronRight size={17} />
-                </button>
-              ))}
-            </div>
-          )}
-          <small className="nutrition-disclaimer">
-            Berechnung mit 1 Rezeptportion je geplanter Mahlzeit. Ungeplante
-            Speisen, Getränke und Snacks sind nicht enthalten.
-          </small>
-        </section>
-      )}
-      {plannedMealCount > 0 && (
-        <button
-          type="button"
-          className="secondary-button week-shopping-action"
-          onClick={onCreateShopping}
-        >
-          <ShoppingCart size={18} /> Einkauf für diese Woche erstellen
-        </button>
-      )}
-    </div>
-  );
-}
-
 function DayDetailSheet({
   data,
   date,
@@ -1312,6 +328,7 @@ function DayDetailSheet({
   onClose,
   onOpenRecipe,
   onPlan,
+  onRemove,
   onNutritionSetup,
   inactive = false,
 }: {
@@ -1321,6 +338,7 @@ function DayDetailSheet({
   onClose: () => void;
   onOpenRecipe: (recipe: Recipe) => void;
   onPlan: (date: string, slot: MealSlot, recipeId?: string) => void;
+  onRemove: (date: string, slot: MealSlot) => void;
   onNutritionSetup: () => void;
   inactive?: boolean;
 }) {
@@ -1360,7 +378,7 @@ function DayDetailSheet({
         <div className="sheet-handle" aria-hidden="true" {...sheetSwipe} />
         <div className="modal-header day-detail-header">
           <div>
-            <small>Dein Tag</small>
+            <small>{date === todayLocal() ? 'Heute' : 'Dein Tag'}</small>
             <h2 id="day-detail-title">{localeDate.format(fromIso(date))}</h2>
             <p>
               {plannedDay?.meals.length ?? 0}{' '}
@@ -1384,44 +402,79 @@ function DayDetailSheet({
               return (
                 <button
                   type="button"
-                  className="day-detail-empty"
+                  className="dd-empty"
                   key={slot}
                   onClick={() => onPlan(date, slot)}
                 >
-                  <span>{slot}</span>
-                  <strong>
-                    <Plus size={17} /> Mahlzeit planen
-                  </strong>
+                  <span className="dd-empty-icon" aria-hidden="true">
+                    <MealSlotIcon slot={slot} />
+                  </span>
+                  <span>
+                    <small>{slot}</small>
+                    <strong>Noch frei – jetzt planen</strong>
+                  </span>
+                  <span className="dd-empty-plus" aria-hidden="true">
+                    <Plus size={18} />
+                  </span>
                 </button>
               );
             return (
-              <article className="day-detail-meal" key={slot}>
+              <article className="dd-meal" key={slot}>
                 <button
                   type="button"
-                  className="day-detail-recipe"
+                  className="dd-media"
                   onClick={() => onOpenRecipe(recipe)}
+                  aria-label={`Rezept ansehen: ${recipe.name}`}
                 >
                   <RecipeImage
                     recipe={recipe}
                     imageUrls={imageUrls}
-                    className="day-detail-image"
+                    className="dd-image"
+                    cover
+                    eager
                   />
-                  <span>
-                    <small>{slot}</small>
-                    <strong>{recipe.name}</strong>
-                    <small>
-                      {meal.servings} Portionen · {recipe.minutes} Min.
-                    </small>
+                  <span className="td-hero-badge">
+                    <MealSlotIcon slot={slot} size={15} />
+                    {slot}
                   </span>
-                  <ChevronRight size={18} />
                 </button>
-                <button
-                  type="button"
-                  className="day-detail-replace"
-                  onClick={() => onPlan(date, slot, recipe.id)}
-                >
-                  <RefreshCw size={17} /> Auswechseln
-                </button>
+                <div className="dd-body">
+                  <h3>{recipe.name}</h3>
+                  <div className="td-hero-meta">
+                    <span>
+                      <Users size={16} aria-hidden="true" />{' '}
+                      {portions(meal.servings)}
+                    </span>
+                    <span>
+                      <Clock3 size={16} aria-hidden="true" /> {recipe.minutes}{' '}
+                      Min.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="td-primary"
+                    onClick={() => onOpenRecipe(recipe)}
+                  >
+                    <Utensils size={19} aria-hidden="true" />
+                    <span>Rezept ansehen</span>
+                    <ChevronRight size={19} aria-hidden="true" />
+                  </button>
+                  <div className="td-hero-actions">
+                    <button
+                      type="button"
+                      onClick={() => onPlan(date, slot, recipe.id)}
+                    >
+                      <RefreshCw size={17} aria-hidden="true" /> Tauschen
+                    </button>
+                    <button
+                      type="button"
+                      className="is-danger"
+                      onClick={() => onRemove(date, slot)}
+                    >
+                      <Trash2 size={17} aria-hidden="true" /> Entfernen
+                    </button>
+                  </div>
+                </div>
               </article>
             );
           })}
@@ -1510,29 +563,93 @@ function RecipesView({
     () => filterRecipes(data.recipes, deferredQuery, filter),
     [data.recipes, deferredQuery, filter],
   );
+  const filterCounts = useMemo(
+    () =>
+      Object.fromEntries(
+        filters.map((item) => [
+          item,
+          filterRecipes(data.recipes, '', item).length,
+        ]),
+      ) as Record<RecipeFilter, number>,
+    // oxlint-disable-next-line react/exhaustive-deps
+    [data.recipes],
+  );
+  // Stable for the whole day, so the banner does not change while browsing.
+  const today = todayLocal();
+  const featured = useMemo(() => {
+    if (!data.recipes.length) return undefined;
+    const random = seededRandom(`idee|${today}`);
+    return data.recipes[Math.floor(random() * data.recipes.length)];
+  }, [data.recipes, today]);
   return (
     <>
       <div
-        className="screen-content recipes-view"
+        className="screen-content recipes-view rx-view"
         inert={Boolean(discardTarget) || undefined}
       >
-        <header className="library-hero">
+        <header className="td-header rx-header">
           <div>
             <h1>Rezepte</h1>
-            <p>Entdecke deine Lieblingsgerichte</p>
+            <p>
+              {data.recipes.length}{' '}
+              {data.recipes.length === 1 ? 'Rezept' : 'Rezepte'} in deiner
+              Sammlung
+            </p>
           </div>
-          <span className="library-hero-leaves" aria-hidden="true">
-            <img src={assetUrl('assets/basil-header-leaves.png')} alt="" />
-          </span>
+          <IconButton
+            label="Rezept hinzufügen"
+            className="rx-add"
+            onClick={onAdd}
+          >
+            <Plus size={24} />
+          </IconButton>
         </header>
-        <IconButton
-          label="Rezept hinzufügen"
-          className="outlined recipes-floating-add"
-          onClick={onAdd}
-        >
-          <Plus size={25} />
-        </IconButton>
-        <label className="search-field">
+        {featured && !query && filter === 'Alle' && (
+          <div className="wk-hero-wrap rx-feature-wrap">
+            <span className="wk-hero-leaves" aria-hidden="true">
+              <img src={assetUrl('assets/basil-card-leaves.png')} alt="" />
+            </span>
+            <button
+              type="button"
+              className="wk-today has-photo rx-feature"
+              onClick={() => onRecipe(featured)}
+              aria-label={`Idee des Tages: ${featured.name}. Rezept öffnen`}
+            >
+              <RecipeImage
+                recipe={featured}
+                imageUrls={imageUrls}
+                className="wk-today-photo"
+                cover
+                eager
+              />
+              <span className="wk-today-shade" aria-hidden="true" />
+              <span className="wk-today-copy" aria-hidden="true">
+                <span className="wk-today-chip">Idee des Tages</span>
+                <strong>{featured.name}</strong>
+                <small>
+                  <span>
+                    <Clock3 size={14} /> {featured.minutes} Min.
+                  </span>
+                  {visibleRecipeTags(featured)[0] && (
+                    <span>
+                      <TagIcon tag={visibleRecipeTags(featured)[0]} />{' '}
+                      {visibleRecipeTags(featured)[0]}
+                    </span>
+                  )}
+                  {featured.favorite && (
+                    <span>
+                      <Heart size={14} fill="currentColor" /> Favorit
+                    </span>
+                  )}
+                </small>
+              </span>
+              <span className="wk-today-action" aria-hidden="true">
+                <ChevronRight size={20} />
+              </span>
+            </button>
+          </div>
+        )}
+        <label className="search-field rx-search">
           <Search size={19} />
           <input
             aria-label="Rezepte suchen"
@@ -1541,7 +658,7 @@ function RecipesView({
             placeholder="Name, Zutat oder Tag suchen …"
           />
         </label>
-        <div className="filter-row" aria-label="Rezeptfilter">
+        <div className="filter-row rx-filters" aria-label="Rezeptfilter">
           {filters.map((item) => (
             <button
               key={item}
@@ -1568,41 +685,10 @@ function RecipesView({
                 <Leaf size={16} />
               )}
               {item}
+              <em>{filterCounts[item]}</em>
             </button>
           ))}
         </div>
-        <div className="recipe-library-actions">
-          <button type="button" onClick={() => importFileRef.current?.click()}>
-            <span>
-              <Upload size={21} />
-            </span>
-            <span>
-              <strong>Rezeptdatei importieren</strong>
-              <small>Mampffred Rezept Datei</small>
-            </span>
-            <ChevronRight size={19} />
-          </button>
-          <input
-            ref={importFileRef}
-            hidden
-            type="file"
-            accept=".mampffred-rezept,.json,.txt,application/json,text/plain"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) onImport(file);
-              event.currentTarget.value = '';
-            }}
-          />
-        </div>
-        <details className="recipe-receive-help">
-          <summary>Rezept aus WhatsApp übernehmen</summary>
-          <p>
-            <strong>Android:</strong> {recipeReceiveInstructions.Android}
-          </p>
-          <p>
-            <strong>iPhone:</strong> {recipeReceiveInstructions.iPhone}
-          </p>
-        </details>
         <span className="sr-only" role="status" aria-live="polite">
           {recipes.length}{' '}
           {recipes.length === 1
@@ -1653,10 +739,10 @@ function RecipesView({
           </section>
         )}
         {recipes.length ? (
-          <div className="recipe-grid" key={filter}>
+          <div className="rx-grid" key={filter}>
             {recipes.map((recipe, index) => (
               <article
-                className="recipe-tile"
+                className="rx-tile"
                 key={recipe.id}
                 style={
                   {
@@ -1665,22 +751,37 @@ function RecipesView({
                 }
               >
                 <button
-                  className="recipe-tile-main"
+                  className="rx-tile-main"
                   onClick={() => onRecipe(recipe)}
                 >
-                  <RecipeImage recipe={recipe} imageUrls={imageUrls} />
+                  <RecipeImage
+                    recipe={recipe}
+                    imageUrls={imageUrls}
+                    className="rx-tile-image"
+                    thumbnail
+                    cover
+                  />
                   <strong>{recipe.name}</strong>
                   <small>
-                    <Clock3 size={13} /> {recipe.minutes} Min.
+                    <span>
+                      <Clock3 size={13} /> {recipe.minutes} Min.
+                    </span>
+                    {visibleRecipeTags(recipe)[0] && (
+                      <span className="rx-tag">
+                        <TagIcon tag={visibleRecipeTags(recipe)[0]} size={12} />{' '}
+                        {visibleRecipeTags(recipe)[0]}
+                      </span>
+                    )}
                   </small>
                 </button>
                 <button
-                  className={`favorite ${recipe.favorite ? 'active' : ''}`}
+                  className={`rx-fav ${recipe.favorite ? 'active' : ''}`}
                   aria-label={
                     recipe.favorite
                       ? 'Aus Favoriten entfernen'
                       : 'Zu Favoriten hinzufügen'
                   }
+                  aria-pressed={Boolean(recipe.favorite)}
                   onClick={() => onToggleFavorite(recipe)}
                 >
                   <Heart
@@ -1688,13 +789,6 @@ function RecipesView({
                     fill={recipe.favorite ? 'currentColor' : 'none'}
                   />
                 </button>
-                <div className="tile-tags">
-                  {visibleRecipeTags(recipe)
-                    .slice(0, 2)
-                    .map((tag) => (
-                      <span key={tag}>{tag}</span>
-                    ))}
-                </div>
               </article>
             ))}
           </div>
@@ -1739,6 +833,63 @@ function RecipesView({
             )}
           </div>
         )}
+        <section className="rx-more" aria-labelledby="rx-more-title">
+          <h2 id="rx-more-title">Rezepte hinzufügen</h2>
+          <div className="rx-more-list">
+            <button type="button" className="is-primary" onClick={onAdd}>
+              <span className="rx-more-icon" aria-hidden="true">
+                <Plus size={20} />
+              </span>
+              <span>
+                <strong>Neues Rezept anlegen</strong>
+                <small>Schritt für Schritt, mit Foto</small>
+              </span>
+              <ChevronRight size={18} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() => importFileRef.current?.click()}
+            >
+              <span className="rx-more-icon" aria-hidden="true">
+                <Upload size={19} />
+              </span>
+              <span>
+                <strong>Rezeptdatei importieren</strong>
+                <small>Mampffred-Rezeptdatei öffnen</small>
+              </span>
+              <ChevronRight size={18} aria-hidden="true" />
+            </button>
+            <details className="rx-more-help">
+              <summary>
+                <span className="rx-more-icon" aria-hidden="true">
+                  <Share2 size={19} />
+                </span>
+                <span>
+                  <strong>Rezept aus WhatsApp übernehmen</strong>
+                  <small>So klappt es auf Android und iPhone</small>
+                </span>
+                <ChevronDown size={18} aria-hidden="true" />
+              </summary>
+              <p>
+                <strong>Android:</strong> {recipeReceiveInstructions.Android}
+              </p>
+              <p>
+                <strong>iPhone:</strong> {recipeReceiveInstructions.iPhone}
+              </p>
+            </details>
+          </div>
+          <input
+            ref={importFileRef}
+            hidden
+            type="file"
+            accept=".mampffred-rezept,.json,.txt,application/json,text/plain"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) onImport(file);
+              event.currentTarget.value = '';
+            }}
+          />
+        </section>
       </div>
       {discardTarget && (
         <DiscardDraftDialog
@@ -1759,8 +910,42 @@ function RecipesView({
   );
 }
 
+const shoppingCategories: Array<{
+  category: ShoppingItem['category'];
+  icon: React.ReactNode;
+  tone: 'green' | 'slate' | 'amber' | 'clay' | 'sage';
+  art?: string;
+}> = [
+  {
+    category: 'Gemüse & Obst',
+    icon: <Carrot size={20} />,
+    tone: 'green',
+    art: 'assets/shopping-produce-v1.webp',
+  },
+  {
+    category: 'Kühlregal',
+    icon: <Milk size={20} />,
+    tone: 'slate',
+    art: 'assets/shopping-dairy-v1.webp',
+  },
+  {
+    category: 'Vorrat',
+    icon: <Container size={20} />,
+    tone: 'amber',
+    art: 'assets/shopping-pantry-v1.webp',
+  },
+  {
+    category: 'Backwaren',
+    icon: <Croissant size={20} />,
+    tone: 'clay',
+    art: 'assets/shopping-bakery-v1.webp',
+  },
+  { category: 'Sonstiges', icon: <ShoppingBasket size={20} />, tone: 'sage' },
+];
+
 function ShoppingView({
   data,
+  now,
   weekStart,
   onWeekStart,
   onChange,
@@ -1768,6 +953,7 @@ function ShoppingView({
   onFromWeek,
 }: {
   data: AppData;
+  now: Date;
   weekStart: string;
   onWeekStart: (weekStart: string) => void;
   onChange: (items: ShoppingItem[]) => void;
@@ -1775,26 +961,7 @@ function ShoppingView({
   onFromWeek: () => void;
 }) {
   const [newItem, setNewItem] = useState('');
-  const categories: ShoppingItem['category'][] = [
-    'Gemüse & Obst',
-    'Kühlregal',
-    'Vorrat',
-    'Backwaren',
-    'Sonstiges',
-  ];
-  const categoryIcons: Record<ShoppingItem['category'], React.ReactNode> = {
-    'Gemüse & Obst': <Carrot size={21} />,
-    Kühlregal: <Milk size={21} />,
-    Vorrat: <Container size={21} />,
-    Backwaren: <Croissant size={21} />,
-    Sonstiges: <ShoppingBasket size={21} />,
-  };
-  const categoryArt: Partial<Record<ShoppingItem['category'], string>> = {
-    'Gemüse & Obst': assetUrl('assets/shopping-produce-v1.png'),
-    Kühlregal: assetUrl('assets/shopping-dairy-v1.png'),
-    Vorrat: assetUrl('assets/shopping-pantry-v1.png'),
-    Backwaren: assetUrl('assets/shopping-bakery-v1.png'),
-  };
+  const currentWeek = startOfLocalWeek(now);
   const visibleShopping = data.shopping.filter(
     (item) =>
       item.origin.kind !== 'week' || item.origin.weekStart === weekStart,
@@ -1803,9 +970,8 @@ function ShoppingView({
     (item) => item.origin.kind === 'week',
   );
   const completed = visibleShopping.filter((item) => item.checked).length;
-  const percentage = visibleShopping.length
-    ? Math.round((completed / visibleShopping.length) * 100)
-    : 0;
+  const total = visibleShopping.length;
+  const circumference = 2 * Math.PI * 22;
   function addItem() {
     const name = newItem.trim();
     if (!name || data.shopping.length >= 10_000) return;
@@ -1821,224 +987,263 @@ function ShoppingView({
     ]);
     setNewItem('');
   }
+  function toggle(item: ShoppingItem) {
+    onChange(
+      data.shopping.map((entry) =>
+        entry.id === item.id ? { ...entry, checked: !entry.checked } : entry,
+      ),
+    );
+  }
   return (
-    <div className="screen-content shopping-view">
-      <header className="shopping-hero">
+    <div className="screen-content shopping-view sh-view">
+      <header className="td-header">
         <div>
           <h1>Einkauf</h1>
-          <p>Deine Einkaufsliste für diese Woche</p>
-        </div>
-        <span className="shopping-hero-leaves" aria-hidden="true">
-          <img src={assetUrl('assets/basil-header-leaves.png')} alt="" />
-        </span>
-        <details className="shopping-period-menu">
-          <summary aria-label="Einkaufswoche wählen">
-            <CalendarDays size={17} />
-            <strong>Woche</strong>
-            <ChevronDown size={17} />
-          </summary>
-          <div>
-            <button
-              type="button"
-              onClick={() => onWeekStart(addLocalDays(weekStart, -7))}
-            >
-              <ChevronLeft size={16} /> Vorherige Woche
-            </button>
-            <span>
-              {shortDate.format(fromIso(weekStart))} –{' '}
-              {shortDate.format(fromIso(addLocalDays(weekStart, 6)))}
-            </span>
-            <button
-              type="button"
-              onClick={() => onWeekStart(addLocalDays(weekStart, 7))}
-            >
-              Nächste Woche <ChevronRight size={16} />
-            </button>
-          </div>
-        </details>
-      </header>
-      <section className="progress-card">
-        <div
-          className="progress-ring"
-          role="progressbar"
-          aria-label="Einkauf erledigt"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={percentage}
-          style={
-            { '--progress': `${percentage * 3.6}deg` } as React.CSSProperties
-          }
-        >
-          <svg viewBox="0 0 44 44" aria-hidden="true">
-            <circle className="progress-ring-track" cx="22" cy="22" r="18" />
-            <circle
-              className="progress-ring-value"
-              cx="22"
-              cy="22"
-              r="18"
-              pathLength="100"
-              strokeDasharray={`${percentage} 100`}
-            />
-          </svg>
-          <span>
-            <strong>{percentage}%</strong>
-            <small>
-              {completed} von {visibleShopping.length}
-            </small>
-          </span>
-        </div>
-        <div>
-          <strong>
-            {visibleShopping.length === 0
-              ? 'Bereit für deine Liste'
-              : percentage === 100
-                ? 'Alles erledigt!'
-                : 'Fast geschafft!'}
-          </strong>
           <p>
-            {visibleShopping.length === 0
-              ? 'Erstelle sie aus deinem Wochenplan oder ergänze eigene Artikel.'
-              : `Du hast ${completed} von ${visibleShopping.length} Artikeln erledigt.`}
+            {shortDate.format(fromIso(weekStart))} –{' '}
+            {shortDate.format(fromIso(addLocalDays(weekStart, 6)))} · KW{' '}
+            {isoWeekNumber(fromIso(weekStart))}
           </p>
-          <div className="progress-track">
-            <span style={{ width: `${percentage}%` }} />
-          </div>
-          <button
-            className="shopping-plan-source"
-            type="button"
-            onClick={onFromWeek}
-          >
-            <Leaf size={20} />
-            <span>
-              <strong>Aus deinem aktuellen Wochenplan</strong>
-              <small>
-                {weekItems.length
-                  ? `${weekItems.length} Zutaten aus geplanten Rezepten`
-                  : 'Alle Zutaten für deine geplanten Rezepte'}
-              </small>
-            </span>
-            <ChevronRight size={17} />
-          </button>
         </div>
-      </section>
-      <div className="shopping-primary-actions">
+      </header>
+      <nav className="wk-nav" aria-label="Einkaufswoche wechseln">
+        <IconButton
+          label="Vorherige Woche"
+          onClick={() => onWeekStart(addLocalDays(weekStart, -7))}
+        >
+          <ChevronLeft size={21} />
+        </IconButton>
         <button
           type="button"
-          className="primary-button shopping-from-week"
-          onClick={onFromWeek}
+          className="wk-nav-label"
+          onClick={() => onWeekStart(currentWeek)}
+          disabled={weekStart === currentWeek}
+          aria-label={
+            weekStart === currentWeek
+              ? 'Aktuelle Woche wird angezeigt'
+              : 'Zur aktuellen Woche wechseln'
+          }
         >
-          <CalendarDays size={18} />
-          <span>
-            <strong>Aus Wochenplan erstellen</strong>
-            <small>Fehlende Zutaten hinzufügen</small>
-          </span>
+          {weekLabel(weekStart, currentWeek)}
+          {weekStart !== currentWeek && <small>Zurück zu heute</small>}
         </button>
-        {completed > 0 && (
-          <button
-            type="button"
-            className="secondary-button clear-completed"
-            onClick={() =>
-              onRemove(visibleShopping.filter((item) => item.checked))
-            }
-          >
-            <Trash2 size={18} />
-            <span>
-              <strong>Erledigte entfernen ({completed})</strong>
-              <small>Nur offene Artikel behalten</small>
+        <IconButton
+          label="Nächste Woche"
+          onClick={() => onWeekStart(addLocalDays(weekStart, 7))}
+        >
+          <ChevronRight size={21} />
+        </IconButton>
+      </nav>
+
+      <div className="wk-hero-wrap">
+        <span className="wk-hero-leaves" aria-hidden="true">
+          <img src={assetUrl('assets/basil-card-leaves.png')} alt="" />
+        </span>
+        <section className="wk-hero sh-hero" aria-label="Einkaufsfortschritt">
+          <span className="wk-hero-glow" aria-hidden="true" />
+          <div className="wk-hero-top">
+            <span
+              className="wk-ring"
+              role="progressbar"
+              aria-label="Einkauf erledigt"
+              aria-valuemin={0}
+              aria-valuemax={total}
+              aria-valuenow={completed}
+            >
+              <svg viewBox="0 0 56 56" aria-hidden="true">
+                <circle className="wk-ring-track" cx="28" cy="28" r="22" />
+                <circle
+                  className="wk-ring-value"
+                  cx="28"
+                  cy="28"
+                  r="22"
+                  strokeDasharray={circumference}
+                  strokeDashoffset={
+                    circumference * (1 - (total ? completed / total : 0))
+                  }
+                />
+              </svg>
+              <strong>{completed}</strong>
             </span>
-          </button>
-        )}
+            <div className="wk-progress-copy">
+              <strong>
+                {total === 0
+                  ? 'Bereit für deine Liste'
+                  : completed === total
+                    ? 'Alles im Korb!'
+                    : `${completed} von ${total} erledigt`}
+              </strong>
+              <small>
+                {total === 0
+                  ? 'Starte mit deinem Wochenplan oder eigenen Artikeln.'
+                  : completed === total
+                    ? 'Guten Appetit und bis zum nächsten Einkauf.'
+                    : `Noch ${total - completed} Artikel offen.`}
+              </small>
+            </div>
+          </div>
+          <div className="sh-hero-actions">
+            <button type="button" className="wk-fill" onClick={onFromWeek}>
+              <CalendarDays size={16} aria-hidden="true" />
+              {weekItems.length
+                ? 'Mit Wochenplan abgleichen'
+                : 'Aus Wochenplan'}
+            </button>
+            {completed > 0 && (
+              <button
+                type="button"
+                className="sh-clear"
+                onClick={() =>
+                  onRemove(visibleShopping.filter((item) => item.checked))
+                }
+              >
+                <Trash2 size={15} aria-hidden="true" /> Erledigte ({completed})
+              </button>
+            )}
+          </div>
+        </section>
       </div>
-      <div className="shopping-groups">
-        {categories.map((category) => {
-          const items = visibleShopping.filter(
-            (item) => item.category === category,
-          );
-          if (!items.length) return null;
-          return (
-            <details open className="shopping-group" key={category}>
-              <summary>
-                <span className="shopping-category-icon" aria-hidden="true">
-                  {categoryIcons[category]}
-                </span>
-                <span className="shopping-category-copy">
-                  <strong>{category}</strong>
-                  <small>
-                    {items.filter((item) => item.checked).length} von{' '}
-                    {items.length} erledigt
-                  </small>
-                </span>
-                {categoryArt[category] && (
-                  <img
-                    className="shopping-category-art"
-                    src={categoryArt[category]}
-                    alt=""
-                    aria-hidden="true"
-                  />
-                )}
-                <ChevronDown size={17} />
-              </summary>
-              {items.map((item) => (
-                <div
-                  className={`shopping-row ${item.checked ? 'is-complete' : ''}`}
-                  key={item.id}
-                >
-                  <label className="shopping-check">
-                    <input
-                      type="checkbox"
-                      aria-label={`${item.name} als ${item.checked ? 'unerledigt' : 'erledigt'} markieren`}
-                      checked={item.checked}
-                      onChange={() =>
-                        onChange(
-                          data.shopping.map((entry) =>
-                            entry.id === item.id
-                              ? { ...entry, checked: !entry.checked }
-                              : entry,
-                          ),
-                        )
-                      }
-                    />
-                    <span className={item.checked ? 'done' : ''}>
-                      {item.name}
-                    </span>
-                  </label>
-                  {item.source && <small>{item.source}</small>}
-                  <IconButton
-                    label={`${item.name} entfernen`}
-                    onClick={() => onRemove([item])}
-                  >
-                    <Trash2 size={15} />
-                  </IconButton>
-                </div>
-              ))}
-            </details>
-          );
-        })}
-      </div>
-      <div className="add-item">
+
+      <form
+        className="sh-add"
+        onSubmit={(event) => {
+          event.preventDefault();
+          addItem();
+        }}
+      >
         <input
           aria-label="Einkaufsartikel hinzufügen"
           value={newItem}
           maxLength={500}
           onChange={(event) => setNewItem(event.target.value)}
-          onKeyDown={(event) => event.key === 'Enter' && addItem()}
-          placeholder="Artikel hinzufügen"
+          placeholder="Artikel hinzufügen, z. B. Milch"
+          enterKeyHint="done"
         />
-        <button onClick={addItem}>
-          <Plus size={19} /> Hinzufügen
+        <button
+          type="submit"
+          aria-label="Artikel hinzufügen"
+          disabled={!newItem.trim()}
+        >
+          <Plus size={22} />
         </button>
-      </div>
+      </form>
+
+      {total === 0 ? (
+        <section className="sh-empty">
+          <img
+            src={assetUrl('assets/mampffred-mascot-small.png')}
+            alt=""
+            width={96}
+            height={105}
+            decoding="async"
+          />
+          <h2>Deine Liste ist noch leer</h2>
+          <p>
+            Tippe oben auf „Aus Wochenplan“, dann stellt Mampffred die Zutaten
+            deiner geplanten Rezepte zusammen.
+          </p>
+        </section>
+      ) : (
+        <div className="sh-groups">
+          {shoppingCategories.map(({ category, icon, tone, art }) => {
+            // Open items first, so the list shrinks while you shop.
+            const items = visibleShopping
+              .filter((item) => item.category === category)
+              .toSorted(
+                (left, right) => Number(left.checked) - Number(right.checked),
+              );
+            if (!items.length) return null;
+            const done = items.filter((item) => item.checked).length;
+            return (
+              <section
+                className={`sh-group ${done === items.length ? 'is-done' : ''}`}
+                key={category}
+                aria-label={category}
+              >
+                <header className="sh-group-head">
+                  <span className={`mo-icon is-${tone}`} aria-hidden="true">
+                    {icon}
+                  </span>
+                  <span>
+                    <strong>{category}</strong>
+                    <small>
+                      {done} von {items.length} erledigt
+                    </small>
+                  </span>
+                  {art && (
+                    <img
+                      className="sh-group-art"
+                      src={assetUrl(art)}
+                      alt=""
+                      aria-hidden="true"
+                      decoding="async"
+                    />
+                  )}
+                </header>
+                <span className="sh-group-bar" aria-hidden="true">
+                  <i
+                    style={{
+                      transform: `scaleX(${done / items.length})`,
+                    }}
+                  />
+                </span>
+                <ul className="sh-list">
+                  {items.map((item) => (
+                    <li
+                      className={`sh-row ${item.checked ? 'is-done' : ''}`}
+                      key={item.id}
+                    >
+                      <label className="sh-check">
+                        <input
+                          type="checkbox"
+                          aria-label={`${item.name} als ${item.checked ? 'unerledigt' : 'erledigt'} markieren`}
+                          checked={item.checked}
+                          onChange={() => toggle(item)}
+                        />
+                        <span className="sh-box" aria-hidden="true">
+                          <Check size={15} strokeWidth={3} />
+                        </span>
+                        <span className="sh-copy">
+                          <strong>{item.name}</strong>
+                          {item.source && <small>{item.source}</small>}
+                        </span>
+                      </label>
+                      <IconButton
+                        className="sh-remove"
+                        label={`${item.name} entfernen`}
+                        onClick={() => onRemove([item])}
+                      >
+                        <Trash2 size={16} />
+                      </IconButton>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
 function MoreView({
   data,
+  now,
   onOpen,
 }: {
   data: AppData;
+  now: Date;
   onOpen: (panel: SettingsPanel) => void;
 }) {
+  const reminder = getBackupReminder(data.lastBackup, now);
+  const plan = visibleMealPlan(data);
+  const plannedThisWeek = weekDates(startOfLocalWeek(now)).reduce(
+    (total, date) =>
+      total + (plan.find((day) => day.date === date)?.meals.length ?? 0),
+    0,
+  );
+  const favorites = data.recipes.filter((recipe) => recipe.favorite).length;
   const groups: Array<{
     title: string;
     items: Array<{
@@ -2046,6 +1251,8 @@ function MoreView({
       label: string;
       detail: string;
       icon: React.ReactNode;
+      tone: 'green' | 'amber' | 'sage' | 'clay' | 'slate';
+      badge?: { label: string; tone: 'ok' | 'warn' | 'due' };
     }>;
   }> = [
     {
@@ -2056,6 +1263,7 @@ function MoreView({
           label: 'Mahlzeiten planen',
           detail: getEnabledMealSlots(data).join(' · '),
           icon: <CalendarDays size={20} />,
+          tone: 'green',
         },
         {
           panel: 'nutrition',
@@ -2064,12 +1272,14 @@ function MoreView({
             ? 'Hinweise aktiviert'
             : 'Optional einrichten',
           icon: <Info size={20} />,
+          tone: 'amber',
         },
         {
           panel: 'foods',
           label: 'Lebensmittel',
           detail: `${data.customFoods.length} ${data.customFoods.length === 1 ? 'eigener Eintrag' : 'eigene Einträge'}`,
           icon: <Leaf size={20} />,
+          tone: 'sage',
         },
       ],
     },
@@ -2083,12 +1293,20 @@ function MoreView({
             ? `Zuletzt ${shortDate.format(new Date(data.lastBackup))}`
             : 'Noch nicht gesichert',
           icon: <ShieldCheck size={20} />,
+          tone: 'clay',
+          badge:
+            reminder.kind === 'recent'
+              ? { label: 'Aktuell', tone: 'ok' }
+              : reminder.kind === 'stale'
+                ? { label: 'Fällig', tone: 'due' }
+                : { label: 'Empfohlen', tone: 'warn' },
         },
         {
           panel: 'privacy',
           label: 'Datenschutz & Speicher',
           detail: 'Lokal auf diesem Gerät',
           icon: <LockKeyhole size={20} />,
+          tone: 'slate',
         },
       ],
     },
@@ -2100,50 +1318,87 @@ function MoreView({
           label: 'App & Updates',
           detail: `Version ${APP_VERSION}`,
           icon: <Settings size={20} />,
+          tone: 'green',
         },
       ],
     },
   ];
   return (
-    <div className="screen-content more-view">
-      <Header title="Mehr" subtitle="Alles an seinem Platz." />
-      <section className="more-intro-card">
-        <span>
-          <Leaf size={27} />
-        </span>
+    <div className="screen-content mo-view">
+      <header className="td-header">
         <div>
-          <strong>Dein persönlicher Begleiter</strong>
-          <small>Individuell. Privat. Immer für dich da.</small>
+          <h1>Mehr</h1>
+          <p>Alles an seinem Platz.</p>
         </div>
-      </section>
+      </header>
+      <div className="wk-hero-wrap">
+        <section className="wk-hero mo-hero" aria-label="Deine Sammlung">
+          <span className="wk-hero-glow" aria-hidden="true" />
+          <div className="mo-hero-top">
+            <span className="mo-mascot" aria-hidden="true">
+              <img
+                src={assetUrl('assets/mampffred-mascot-small.png')}
+                alt=""
+                width={68}
+                height={74}
+                decoding="async"
+              />
+            </span>
+            <div>
+              <strong>Hallo, ich bin Mampffred!</strong>
+              <small>
+                Dein privater Küchenhelfer. Alles bleibt auf diesem Gerät.
+              </small>
+            </div>
+          </div>
+          <dl className="mo-stats">
+            <div>
+              <dt>Rezepte</dt>
+              <dd>{data.recipes.length}</dd>
+            </div>
+            <div>
+              <dt>Favoriten</dt>
+              <dd>{favorites}</dd>
+            </div>
+            <div>
+              <dt>Diese Woche</dt>
+              <dd>{plannedThisWeek}</dd>
+            </div>
+          </dl>
+        </section>
+      </div>
       {groups.map((group) => (
-        <section className="more-menu-group" key={group.title}>
+        <section className="mo-group" key={group.title}>
           <h2>{group.title}</h2>
-          <div className="more-menu">
+          <div className="mo-menu">
             {group.items.map((item) => (
               <button
                 type="button"
                 key={item.panel}
                 onClick={() => onOpen(item.panel)}
               >
-                <span className="more-menu-icon">{item.icon}</span>
+                <span className={`mo-icon is-${item.tone}`} aria-hidden="true">
+                  {item.icon}
+                </span>
                 <span>
                   <strong>{item.label}</strong>
                   <small>{item.detail}</small>
                 </span>
-                <ChevronRight size={19} />
+                {item.badge && (
+                  <em className={`mo-badge is-${item.badge.tone}`}>
+                    {item.badge.label}
+                  </em>
+                )}
+                <ChevronRight size={19} aria-hidden="true" />
               </button>
             ))}
           </div>
         </section>
       ))}
-      <section className="more-control-note">
-        <Sparkles size={20} />
-        <p>
-          <strong>Du behältst die Kontrolle.</strong>
-          <span>Alle Einstellungen kannst du jederzeit anpassen.</span>
-        </p>
-      </section>
+      <p className="mo-footer">
+        <LockKeyhole size={15} aria-hidden="true" /> Privat & offline ·
+        Mampffred {APP_VERSION}
+      </p>
     </div>
   );
 }
@@ -5005,6 +4260,7 @@ function PlannerSheet({
                 recipe={recipe}
                 imageUrls={imageUrls}
                 className="mini-sprite"
+                thumbnail
               />
               <span>
                 <strong>{recipe.name}</strong>
@@ -6333,6 +5589,13 @@ type PendingShoppingDeletion = {
 type ToastState = {
   message: string;
   tone: 'success' | 'error';
+  duration?: number;
+  id?: number;
+};
+type PendingPlanUndo = {
+  message: string;
+  changes: PlanChange[];
+  timer: number;
 };
 
 export default function MampffredApp() {
@@ -6387,6 +5650,8 @@ export default function MampffredApp() {
     useState<PendingShoppingDeletion>();
   const [planner, setPlanner] = useState<PlannerState>();
   const [plannerResume, setPlannerResume] = useState<PlannerResume>();
+  const [quickPlanTargets, setQuickPlanTargets] = useState<FreeSlot[]>();
+  const [pendingPlanUndo, setPendingPlanUndo] = useState<PendingPlanUndo>();
   const [toast, setToast] = useState<ToastState>();
   const [sharedRecipePreview, setSharedRecipePreview] =
     useState<SharedRecipeImport>();
@@ -6706,6 +5971,7 @@ export default function MampffredApp() {
         recipeImportError ||
         editorRecipeId ||
         planner ||
+        quickPlanTargets ||
         settings ||
         backupRequest ||
         deleteRequest ||
@@ -6764,6 +6030,7 @@ export default function MampffredApp() {
     recipeImportError,
     editorRecipeId,
     planner,
+    quickPlanTargets,
     settings,
     backupRequest,
     deleteRequest,
@@ -6852,6 +6119,11 @@ export default function MampffredApp() {
         restoreCurrentTabEntry();
         return;
       }
+      if (quickPlanTargets) {
+        setQuickPlanTargets(undefined);
+        restoreCurrentTabEntry();
+        return;
+      }
       if (editorRecipeId) {
         setEditorRecipeId(undefined);
         setPendingPlanTarget(undefined);
@@ -6901,6 +6173,7 @@ export default function MampffredApp() {
     editorRecipeId,
     planner,
     plannerResume,
+    quickPlanTargets,
     selectedDayDate,
     selectedRecipeId,
     settings,
@@ -7001,7 +6274,7 @@ export default function MampffredApp() {
     duration = 4500,
     tone: ToastState['tone'] = 'success',
   ) {
-    setToast({ message, tone });
+    setToast({ message, tone, duration, id: performance.now() });
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(undefined), duration);
   }
@@ -7539,63 +6812,150 @@ export default function MampffredApp() {
       servings,
     );
   }
+  function clearPlanUndo() {
+    setPendingPlanUndo((current) => {
+      if (current) {
+        window.clearTimeout(current.timer);
+        deletionTimers.current.delete(current.timer);
+      }
+      return undefined;
+    });
+  }
+  /** Writes plan changes and offers undo whenever something was replaced. */
+  function commitPlanChanges(
+    entries: Array<{ date: string; slot: MealSlot; meal?: PlannedMeal }>,
+    message: string,
+    undo: 'always' | 'replaced' = 'always',
+  ) {
+    let recorded: PlanChange[] = [];
+    const accepted = setData((current) => {
+      const result = applyPlanChanges(current.plan, entries);
+      recorded = result.changes;
+      return result.changes.length
+        ? { ...current, plan: result.plan }
+        : current;
+    });
+    if (!accepted) return false;
+    const offerUndo =
+      recorded.length > 0 &&
+      (undo === 'always' || recorded.some((change) => change.before));
+    clearPlanUndo();
+    if (!offerUndo) {
+      showToast(message);
+      return true;
+    }
+    const timer = window.setTimeout(() => {
+      deletionTimers.current.delete(timer);
+      setPendingPlanUndo((current) =>
+        current?.timer === timer ? undefined : current,
+      );
+    }, 8_000);
+    deletionTimers.current.add(timer);
+    setToast(undefined);
+    setPendingPlanUndo({ message, changes: recorded, timer });
+    return true;
+  }
+  function undoPlanChanges() {
+    if (!pendingPlanUndo) return;
+    const { changes } = pendingPlanUndo;
+    if (
+      !setData((current) => ({
+        ...current,
+        plan: revertPlanChanges(
+          current.plan,
+          changes,
+          new Set(current.recipes.map((recipe) => recipe.id)),
+        ),
+      }))
+    )
+      return;
+    clearPlanUndo();
+    showToast('Plan wiederhergestellt.');
+  }
+  function plannedMeal(
+    recipeId: string,
+    slot: MealSlot,
+    servings: number,
+  ): PlannedMeal {
+    return {
+      slot,
+      recipeId,
+      servings,
+      trackedServings: Math.min(
+        dataRef.current.nutritionSettings.defaultTrackedServings,
+        servings,
+      ),
+    };
+  }
   function planRecipe(
     date: string,
     slot: MealSlot,
     recipeId: string,
     servings: number,
   ) {
+    if (!dataRef.current.recipes.some((recipe) => recipe.id === recipeId))
+      return;
     if (
-      !setData((current) => {
-        const existing = current.plan.find((day) => day.date === date);
-        const recipe = current.recipes.find((item) => item.id === recipeId);
-        if (!recipe) return current;
-        const updatedDay = {
-          date,
-          meals: [
-            ...(existing?.meals ?? []).filter((meal) => meal.slot !== slot),
-            {
-              slot,
-              recipeId,
-              servings,
-              trackedServings: Math.min(
-                current.nutritionSettings.defaultTrackedServings,
-                servings,
-              ),
-            },
-          ],
-        };
-        return {
-          ...current,
-          plan: [
-            ...current.plan.filter((day) => day.date !== date),
-            updatedDay,
-          ].sort((left, right) => left.date.localeCompare(right.date)),
-        };
-      })
+      !commitPlanChanges(
+        [{ date, slot, meal: plannedMeal(recipeId, slot, servings) }],
+        'Mahlzeit ist eingeplant.',
+        'replaced',
+      )
     )
       return;
     setPlanner(undefined);
     setSelectedRecipeId(undefined);
     setRecipePlanWeekStart(undefined);
-    showToast('Mahlzeit ist eingeplant.');
   }
   function removePlannedMeal(date: string, slot: MealSlot) {
-    setData((current) => ({
-      ...current,
-      plan: current.plan
-        .map((day) =>
-          day.date === date
-            ? {
-                ...day,
-                meals: day.meals.filter((meal) => meal.slot !== slot),
-              }
-            : day,
-        )
-        .filter((day) => day.meals.length),
-    }));
+    commitPlanChanges([{ date, slot }], 'Mahlzeit entfernt.');
     setPlanner(undefined);
-    showToast('Mahlzeit wurde aus der Planung entfernt.');
+  }
+  function planSuggestion(date: string, slot: MealSlot, recipe: Recipe) {
+    const servings = preferredServings(dataRef.current.plan, recipe.servings);
+    commitPlanChanges(
+      [{ date, slot, meal: plannedMeal(recipe.id, slot, servings) }],
+      `„${recipe.name}“ ist eingeplant.`,
+    );
+  }
+  function confirmQuickPlan(proposals: PlanProposal[], servings: number) {
+    if (
+      commitPlanChanges(
+        proposals.map((entry) => ({
+          date: entry.date,
+          slot: entry.slot,
+          meal: plannedMeal(entry.recipeId, entry.slot, servings),
+        })),
+        proposals.length === 1
+          ? '1 Mahlzeit eingeplant.'
+          : `${proposals.length} Mahlzeiten eingeplant.`,
+      )
+    )
+      setQuickPlanTargets(undefined);
+  }
+  function openQuickPlan(targetWeekStart: string) {
+    const targets = freeSlots(
+      visibleMealPlan(dataRef.current),
+      weekDates(targetWeekStart),
+      mealSlots,
+      todayLocal(now),
+    );
+    if (targets.length) setQuickPlanTargets(targets);
+  }
+  /** Ideas go to the first free slot, with the planner open for review. */
+  function planIdea(recipe: Recipe, targetWeekStart: string) {
+    const open = freeSlots(
+      visibleMealPlan(dataRef.current),
+      weekDates(targetWeekStart),
+      mealSlots,
+      todayLocal(now),
+    );
+    const target =
+      open.find((entry) => recipesForSlot([recipe], entry.slot).length) ??
+      open[0];
+    const servings = preferredServings(dataRef.current.plan, recipe.servings);
+    if (target) openPlanner(target.date, target.slot, recipe.id, servings);
+    else openPlanner(targetWeekStart, mealSlots.at(-1), recipe.id, servings);
   }
   async function saveRecipeDraft(
     draft: EditorDraft,
@@ -7889,10 +7249,12 @@ export default function MampffredApp() {
         newStandardImageKeys(createEmptyData(), fresh),
       );
       // No user data is removed until all four images are available.
-      if ('caches' in window)
+      if ('caches' in window) {
         await caches.delete(
           `mampffred-${encodeURIComponent(import.meta.env.BASE_URL)}-inbox`,
         );
+        await caches.delete(THUMBNAIL_CACHE);
+      }
       for (const timer of deletionTimers.current) window.clearTimeout(timer);
       deletionTimers.current.clear();
       await queueReplaceAllData(fresh, images);
@@ -7922,6 +7284,8 @@ export default function MampffredApp() {
     pendingDeletionRef.current = undefined;
     setPendingDeletion(undefined);
     setPendingShoppingDeletion(undefined);
+    // Undo must never rewrite a restored backup.
+    setPendingPlanUndo(undefined);
     const restoredUrls: Record<string, string> = {};
     for (const [key, blob] of Object.entries(restoredBlobs)) {
       restoredUrls[key] = URL.createObjectURL(blob);
@@ -8115,6 +7479,7 @@ export default function MampffredApp() {
           {appUpdate.status === 'available' &&
             !editorRecipeId &&
             !planner &&
+            !quickPlanTargets &&
             !settings &&
             !backupRequest &&
             !selectedRecipeId &&
@@ -8171,6 +7536,7 @@ export default function MampffredApp() {
                 selectedRecipeId ||
                 editorRecipeId ||
                 planner ||
+                quickPlanTargets ||
                 settings ||
                 backupRequest ||
                 weekShoppingRequest ||
@@ -8186,6 +7552,7 @@ export default function MampffredApp() {
                 selectedRecipeId ||
                 editorRecipeId ||
                 planner ||
+                quickPlanTargets ||
                 settings ||
                 backupRequest ||
                 weekShoppingRequest ||
@@ -8207,9 +7574,15 @@ export default function MampffredApp() {
                 }}
                 onSettings={() => changeTab('more')}
                 onBackup={() => setBackupRequest({ mode: 'create' })}
-                onPlan={(slot = 'Abendessen') =>
-                  openPlanner(todayLocal(now), slot)
+                onPlan={(slot, date) => openPlanner(date, slot)}
+                onRemove={(slot, date) => removePlannedMeal(date, slot)}
+                onPlanSuggestion={(slot, date, recipe) =>
+                  planSuggestion(date, slot, recipe)
                 }
+                onOpenWeek={() => {
+                  setWeekStart(startOfLocalWeek(now));
+                  changeTab('week');
+                }}
                 onAddRecipe={openNewRecipeEditor}
                 onAddSamples={addSampleRecipes}
               />
@@ -8217,17 +7590,13 @@ export default function MampffredApp() {
             {tab === 'week' && (
               <WeekView
                 data={data}
+                now={now}
                 imageUrls={imageUrls}
                 weekStart={weekStart}
                 onWeekStart={setWeekStart}
-                onAdd={(date, slot) => {
-                  if (data.recipes.length) {
-                    openPlanner(date, slot);
-                    return;
-                  }
-                  setPendingPlanTarget({ date, slot });
-                  openNewRecipeEditor();
-                }}
+                onAdd={(date, slot) => openPlanner(date, slot)}
+                onFillWeek={() => openQuickPlan(weekStart)}
+                onPlanIdea={(recipe) => planIdea(recipe, weekStart)}
                 onCreateShopping={() => openWeekShopping(weekStart)}
                 onNutritionSetup={() => setSettings('nutrition')}
                 onDismissNutrition={() =>
@@ -8249,6 +7618,7 @@ export default function MampffredApp() {
                   setSelectedRecipeId(recipe.id);
                 }}
                 onOpenDay={setSelectedDayDate}
+                onSettings={() => changeTab('more')}
               />
             )}
             {tab === 'recipes' && (
@@ -8279,6 +7649,7 @@ export default function MampffredApp() {
             {tab === 'shopping' && (
               <ShoppingView
                 data={data}
+                now={now}
                 weekStart={weekStart}
                 onWeekStart={setWeekStart}
                 onChange={(shopping) =>
@@ -8288,7 +7659,9 @@ export default function MampffredApp() {
                 onFromWeek={() => openWeekShopping(weekStart)}
               />
             )}
-            {tab === 'more' && <MoreView data={data} onOpen={setSettings} />}
+            {tab === 'more' && (
+              <MoreView data={data} now={now} onOpen={setSettings} />
+            )}
             <BottomNav tab={tab} onTab={changeTab} />
             {saveState !== 'idle' && (
               <div
@@ -8326,6 +7699,7 @@ export default function MampffredApp() {
               onPlan={(date, slot, recipeId) => {
                 openPlanner(date, slot, recipeId);
               }}
+              onRemove={removePlannedMeal}
               onNutritionSetup={() => {
                 setSettings('nutrition');
               }}
@@ -8447,6 +7821,15 @@ export default function MampffredApp() {
               }}
             />
           )}
+          {quickPlanTargets && (
+            <QuickPlanSheet
+              data={data}
+              imageUrls={imageUrls}
+              targets={quickPlanTargets}
+              onClose={() => setQuickPlanTargets(undefined)}
+              onConfirm={confirmQuickPlan}
+            />
+          )}
           {settings && (
             <SettingsView
               data={data}
@@ -8565,7 +7948,9 @@ export default function MampffredApp() {
                     ? '10 Sekunden zum Wiederherstellen.'
                     : 'Alle gemeinsam wiederherstellen · 10 Sekunden.'
                 }
+                key={pendingDeletion.cleanupTimer}
                 busy={undoBusy}
+                duration={10_000}
                 onUndo={() => void undoDeleteRecipe()}
                 onDismiss={finishRecipeDeletion}
               />
@@ -8577,6 +7962,8 @@ export default function MampffredApp() {
                     ? 'Einkaufsartikel entfernt'
                     : `${pendingShoppingDeletion.removed.length} Einkaufsartikel entfernt`
                 }
+                key={pendingShoppingDeletion.cleanupTimer}
+                duration={10_000}
                 onUndo={undoShoppingDeletion}
                 onDismiss={() => {
                   window.clearTimeout(pendingShoppingDeletion.cleanupTimer);
@@ -8587,10 +7974,21 @@ export default function MampffredApp() {
                 }}
               />
             )}
+            {pendingPlanUndo && (
+              <AppToast
+                key={pendingPlanUndo.timer}
+                message={pendingPlanUndo.message}
+                duration={8_000}
+                onUndo={undoPlanChanges}
+                onDismiss={clearPlanUndo}
+              />
+            )}
             {toast && (
               <AppToast
+                key={toast.id}
                 message={toast.message}
                 tone={toast.tone}
+                duration={toast.duration}
                 onDismiss={() => {
                   if (toastTimer.current)
                     window.clearTimeout(toastTimer.current);

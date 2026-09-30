@@ -21,11 +21,14 @@ export function FramedImage({
   alt,
   frame = defaultImageFrame,
   className = '',
+  cover = false,
 }: {
   src: string;
   alt: string;
   frame?: ImageFrame;
   className?: string;
+  /** Fill the box instead of letterboxing a manual crop. */
+  cover?: boolean;
 }) {
   const cropId = useId();
   if (frame.crop) {
@@ -41,7 +44,7 @@ export function FramedImage({
           role="img"
           aria-label={alt}
           viewBox={`${x} ${c.y} ${width} ${c.height}`}
-          preserveAspectRatio="xMidYMid meet"
+          preserveAspectRatio={cover ? 'xMidYMid slice' : 'xMidYMid meet'}
         >
           <defs>
             <clipPath id={cropId}>
@@ -65,6 +68,7 @@ export function FramedImage({
         src={src}
         alt={alt}
         draggable={false}
+        decoding="async"
         style={{
           objectPosition: `${frame.x * 100}% ${frame.y * 100}%`,
           transform: `scale(${frame.zoom})`,

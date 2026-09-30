@@ -73,6 +73,7 @@ function serviceWorkerPrecache() {
         'assets/mampffred-mascot-small.png',
         'assets/basil-header-leaves.png',
         'assets/basil-card-leaves.png',
+        'assets/mampffred-empty-plate.webp',
         'assets/recipe-sprite-optimized.jpg',
         ...builtAssets,
       ];

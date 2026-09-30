@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import MampffredApp from '@/components/mampffred-app';
 import '@/app/globals.css';
+import '@/app/plan-views.css';
 
 const root = document.getElementById('root')!;
 
