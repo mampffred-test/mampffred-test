@@ -11,6 +11,7 @@ import { APP_SCHEMA_VERSION } from '../lib/model.ts';
 import {
   aggregateNutritionDay,
   aggregateNutritionWeek,
+  proteinDailyGoal,
   suggestRecipesForWeek,
 } from '../lib/nutrition.ts';
 
@@ -83,6 +84,8 @@ function data(
     foodOverrides: {},
     customFoods: [],
     recipeDrafts: [],
+    pantry: {},
+    foodAliases: {},
   };
 }
 
@@ -244,4 +247,55 @@ test('rankt lokale Rezepte nach Ziellücken-Nähe und Datenqualität', () => {
   assert.ok(
     suggestions.every((suggestion) => suggestion.nutrient === 'proteinG'),
   );
+});
+
+test('nutzt eine Schätzfunktion statt gespeicherter Rezeptwerte', () => {
+  const plain: Recipe = { ...recipe('ohne', 2, {}), nutrition: undefined };
+  const appData = data(
+    [plain],
+    [{ slot: 'Abendessen', recipeId: 'ohne', servings: 2, trackedServings: 1 }],
+  );
+  const week = aggregateNutritionWeek(appData, '2026-09-07', () => ({
+    enteredAs: 'whole-recipe',
+    updatedAt: '2026-09-07T12:00:00.000Z',
+    wholeRecipe: {
+      proteinG: { value: 50, quality: 'declared', source: { kind: 'user' } },
+    },
+  }));
+  assert.equal(week.nutrients.proteinG.value, 25);
+});
+
+test('liest das Proteinziel pro Person und Tag', () => {
+  const goals: NutritionGoal[] = [
+    { nutrient: 'proteinG', period: 'day', minimum: 70, enabled: true },
+  ];
+  assert.equal(proteinDailyGoal(data([], [], goals).nutritionSettings), 70);
+  assert.equal(
+    proteinDailyGoal(
+      data([], [], [{ ...goals[0], enabled: false }]).nutritionSettings,
+    ),
+    undefined,
+  );
+});
+
+test('vergleicht Tagesziele über die geplanten Tage der Woche', () => {
+  const appData = data(
+    [
+      recipe('basis', 1, { proteinG: { value: 20, quality: 'declared' } }),
+      recipe('nah', 1, { proteinG: { value: 38, quality: 'declared' } }),
+      recipe('zu-viel', 1, { proteinG: { value: 100, quality: 'declared' } }),
+    ],
+    [{ slot: 'Mittagessen', recipeId: 'basis', servings: 1 }],
+    [{ nutrient: 'proteinG', period: 'day', minimum: 60, enabled: true }],
+  );
+  const suggestions = suggestRecipesForWeek(
+    appData,
+    aggregateNutritionWeek(appData, '2026-09-07'),
+    2,
+  );
+  assert.deepEqual(
+    suggestions.map((entry) => entry.recipeId),
+    ['nah', 'zu-viel'],
+  );
+  assert.equal(suggestions[0].gap, 40);
 });

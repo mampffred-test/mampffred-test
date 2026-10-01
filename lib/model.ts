@@ -4,10 +4,12 @@ import {
   parseLocalDate,
   startOfLocalWeek,
 } from './local-date.ts';
+import { AISLES, CATALOG_PANTRY_PRESET, type AisleId } from './food-catalog.ts';
+import { classifyShoppingName } from './shopping-category.ts';
 
 export type MealSlot = 'Frühstück' | 'Mittagessen' | 'Abendessen';
 
-export const APP_SCHEMA_VERSION = 6 as const;
+export const APP_SCHEMA_VERSION = 7 as const;
 
 export type NutrientKey =
   | 'energyKcal'
@@ -42,7 +44,8 @@ export type RecipeNutrition = {
 
 export type NutritionGoal = {
   nutrient: NutrientKey;
-  period: 'week';
+  /** Since v7 goals are per person and day; 'week' only exists in old data. */
+  period: 'day' | 'week';
   minimum: number;
   enabled: boolean;
 };
@@ -65,7 +68,11 @@ export type FoodOverride =
 
 export type FoodLink =
   | { kind: 'bls'; foodId: string }
-  | { kind: 'custom'; foodId: string };
+  | { kind: 'custom'; foodId: string }
+  /** Mampffred catalog food, foodId "mf:<id>". */
+  | { kind: 'catalog'; foodId: string };
+
+export type PantryState = 'always' | 'check';
 
 export type CustomFood = {
   needsReview?: boolean;
@@ -87,6 +94,9 @@ export type RecipeIngredient = {
   /** Omitted in older recipes: quantities scale with servings by default. */
   scaleWithServings?: boolean;
   foodLink?: FoodLink;
+  /** Preparation or hint, e.g. "fein gehackt". */
+  note?: string;
+  optional?: boolean;
 };
 
 export type Recipe = {
@@ -127,13 +137,17 @@ export type PlannedDay = {
 
 export type ShoppingItem = {
   id: string;
+  /** What to buy. Items from before v7 may still contain the amount. */
   name: string;
-  category:
-    | 'Gemüse & Obst'
-    | 'Kühlregal'
-    | 'Vorrat'
-    | 'Backwaren'
-    | 'Sonstiges';
+  /** Purchasable amount, e.g. "4 Schalen à 250 g". */
+  quantity?: string;
+  /** Recipe need and provenance, e.g. "950 g für 4 Rezepte". */
+  detail?: string;
+  foodId?: string;
+  category: AisleId;
+  optional?: boolean;
+  /** Usually at home: shown in the collapsed "Vorrat prüfen" section. */
+  pantryCheck?: boolean;
   checked: boolean;
   source?: string;
   origin:
@@ -149,6 +163,9 @@ export type ShoppingItem = {
           recipeId: string;
         }>;
         fingerprint: string;
+        /** Shopping range this list was built for (inclusive dates). */
+        from?: string;
+        to?: string;
       };
   needsReview?: boolean;
 };
@@ -165,8 +182,20 @@ export type AppData = {
   foodOverrides: Record<string, FoodOverride>;
   customFoods: CustomFood[];
   recipeDrafts: RecipeDraft[];
+  /** Catalog food id -> how the household keeps it. */
+  pantry: Record<string, PantryState>;
+  /** Folded ingredient name -> food reference id, learned from the user. */
+  foodAliases: Record<string, string>;
+  /** Own walk order through the store; missing aisles follow in default order. */
+  aisleOrder?: AisleId[];
   lastBackup?: string;
 };
+
+export function defaultPantry(): Record<string, PantryState> {
+  return Object.fromEntries(
+    CATALOG_PANTRY_PRESET.map((id) => [id, 'check' as const]),
+  );
+}
 
 export const seedRecipes: Recipe[] = [
   {
@@ -347,18 +376,18 @@ export function createSeedData(): AppData {
     recipes: createSampleRecipes(),
     plan,
     shopping: [
-      ['Paprika', 'Gemüse & Obst', 'Gemüse-Curry'],
-      ['Zucchini', 'Gemüse & Obst', 'Gemüse-Curry'],
-      ['Karotten', 'Gemüse & Obst', 'Gemüse-Curry'],
-      ['Zwiebeln', 'Gemüse & Obst', 'Kartoffelauflauf'],
-      ['Tomaten', 'Gemüse & Obst', 'Pasta'],
-      ['Feta', 'Kühlregal', 'Ofengemüse'],
-      ['Sahne', 'Kühlregal', 'Kartoffelauflauf'],
-      ['Mozzarella', 'Kühlregal', 'Pasta'],
-      ['Reis', 'Vorrat', 'Linsen-Curry'],
-      ['Kokosmilch', 'Vorrat', 'Linsen-Curry'],
-      ['Rote Linsen', 'Vorrat', 'Linsensuppe'],
-      ['Brot', 'Backwaren', 'Ofengemüse'],
+      ['Paprika', 'obst-gemuese', 'Gemüse-Curry'],
+      ['Zucchini', 'obst-gemuese', 'Gemüse-Curry'],
+      ['Karotten', 'obst-gemuese', 'Gemüse-Curry'],
+      ['Zwiebeln', 'obst-gemuese', 'Kartoffelauflauf'],
+      ['Tomaten', 'obst-gemuese', 'Pasta'],
+      ['Feta', 'kuehlregal', 'Ofengemüse'],
+      ['Sahne', 'kuehlregal', 'Kartoffelauflauf'],
+      ['Mozzarella', 'kuehlregal', 'Pasta'],
+      ['Reis', 'trocken', 'Linsen-Curry'],
+      ['Kokosmilch', 'konserven', 'Linsen-Curry'],
+      ['Rote Linsen', 'trocken', 'Linsensuppe'],
+      ['Brot', 'brot', 'Ofengemüse'],
     ].map(([name, category, source], index) => ({
       id: `item-${index}`,
       name,
@@ -379,6 +408,8 @@ export function createSeedData(): AppData {
     foodOverrides: {},
     customFoods: [],
     recipeDrafts: [],
+    pantry: defaultPantry(),
+    foodAliases: {},
   };
 }
 
@@ -401,6 +432,8 @@ export function createEmptyData(): AppData {
     foodOverrides: {},
     customFoods: [],
     recipeDrafts: [],
+    pantry: defaultPantry(),
+    foodAliases: {},
   };
 }
 
@@ -524,7 +557,12 @@ function migrateRecipeNutrition(
 }
 
 function migrateFoodLink(value: unknown): FoodLink {
-  if (!isRecord(value) || (value.kind !== 'bls' && value.kind !== 'custom'))
+  if (
+    !isRecord(value) ||
+    (value.kind !== 'bls' &&
+      value.kind !== 'custom' &&
+      value.kind !== 'catalog')
+  )
     throw new Error('INVALID_APP_DATA');
   const foodId = expectString(value.foodId);
   if (!foodId || foodId.length > 200) throw new Error('INVALID_APP_DATA');
@@ -564,9 +602,17 @@ function migrateRecipe(value: unknown, legacyNutrition: boolean): Recipe {
       const unit = expectString(ingredient.unit);
       const name = expectString(ingredient.name);
       if (
-        ingredient.scaleWithServings !== undefined &&
-        typeof ingredient.scaleWithServings !== 'boolean'
+        (ingredient.scaleWithServings !== undefined &&
+          typeof ingredient.scaleWithServings !== 'boolean') ||
+        (ingredient.optional !== undefined &&
+          typeof ingredient.optional !== 'boolean')
       )
+        throw new Error('INVALID_APP_DATA');
+      const note =
+        ingredient.note === undefined
+          ? undefined
+          : expectString(ingredient.note);
+      if (note !== undefined && note.length > 500)
         throw new Error('INVALID_APP_DATA');
       if (
         !ingredientId ||
@@ -587,6 +633,8 @@ function migrateRecipe(value: unknown, legacyNutrition: boolean): Recipe {
         ...(ingredient.foodLink !== undefined
           ? { foodLink: migrateFoodLink(ingredient.foodLink) }
           : {}),
+        ...(note ? { note } : {}),
+        ...(ingredient.optional === true ? { optional: true } : {}),
       };
     }),
     steps: expectStringArray(value.steps),
@@ -630,13 +678,63 @@ function migrateRecipe(value: unknown, legacyNutrition: boolean): Recipe {
 }
 
 const mealSlots: MealSlot[] = ['Frühstück', 'Mittagessen', 'Abendessen'];
-const shoppingCategories: ShoppingItem['category'][] = [
-  'Gemüse & Obst',
-  'Kühlregal',
-  'Vorrat',
-  'Backwaren',
-  'Sonstiges',
-];
+const shoppingCategories = new Set<string>(AISLES.map((aisle) => aisle.id));
+const legacyShoppingCategories: Record<string, AisleId> = {
+  'Gemüse & Obst': 'obst-gemuese',
+  Kühlregal: 'kuehlregal',
+  Vorrat: 'sonstiges',
+  Backwaren: 'brot',
+  Sonstiges: 'sonstiges',
+};
+
+function migrateShoppingCategory(value: unknown, name: string): AisleId {
+  const category = expectString(value);
+  if (shoppingCategories.has(category)) return category as AisleId;
+  const legacy = Object.hasOwn(legacyShoppingCategories, category)
+    ? legacyShoppingCategories[category]
+    : undefined;
+  if (!legacy) throw new Error('INVALID_APP_DATA');
+  return classifyShoppingName(name) ?? legacy;
+}
+
+function migratePantry(value: unknown): Record<string, PantryState> {
+  if (value === undefined) return defaultPantry();
+  if (!isRecord(value) || Object.keys(value).length > 2_000)
+    throw new Error('INVALID_APP_DATA');
+  return Object.fromEntries(
+    Object.entries(value).map(([key, state]) => {
+      if (!key || key.length > 200 || (state !== 'always' && state !== 'check'))
+        throw new Error('INVALID_APP_DATA');
+      return [key, state];
+    }),
+  );
+}
+
+function migrateAisleOrder(value: unknown): AisleId[] | undefined {
+  if (value === undefined) return undefined;
+  const order = expectStringArray(value);
+  if (
+    order.length > shoppingCategories.size ||
+    new Set(order).size !== order.length ||
+    order.some((id) => !shoppingCategories.has(id))
+  )
+    throw new Error('INVALID_APP_DATA');
+  return order as AisleId[];
+}
+
+function migrateFoodAliases(value: unknown): Record<string, string> {
+  if (value === undefined) return {};
+  if (!isRecord(value) || Object.keys(value).length > 2_000)
+    throw new Error('INVALID_APP_DATA');
+  return Object.fromEntries(
+    Object.entries(value).map(([key, foodId]) => {
+      const id = expectString(foodId);
+      if (!key || key.length > 300 || !id || id.length > 200)
+        throw new Error('INVALID_APP_DATA');
+      return [key, id];
+    }),
+  );
+}
 
 function migrateShoppingOrigin(value: unknown): ShoppingItem['origin'] {
   if (value === undefined) return { kind: 'manual' };
@@ -652,11 +750,19 @@ function migrateShoppingOrigin(value: unknown): ShoppingItem['origin'] {
   const weekStart = expectString(value.weekStart);
   parseLocalDate(weekStart);
   if (value.sources.length > 500) throw new Error('INVALID_APP_DATA');
+  const rangeDate = (key: 'from' | 'to') => {
+    if (value[key] === undefined) return {};
+    const date = expectString(value[key]);
+    parseLocalDate(date);
+    return { [key]: date };
+  };
   return {
     kind: 'week',
     weekStart,
     groupKey: expectString(value.groupKey),
     fingerprint: expectString(value.fingerprint),
+    ...rangeDate('from'),
+    ...rangeDate('to'),
     sources: value.sources.map((source) => {
       if (!isRecord(source)) throw new Error('INVALID_APP_DATA');
       const date = expectString(source.date);
@@ -670,7 +776,10 @@ function migrateShoppingOrigin(value: unknown): ShoppingItem['origin'] {
   };
 }
 
-function migrateNutritionSettings(value: unknown): NutritionSettings {
+function migrateNutritionSettings(
+  value: unknown,
+  weeklyToDaily = false,
+): NutritionSettings {
   if (value === undefined)
     return {
       enabled: false,
@@ -708,20 +817,25 @@ function migrateNutritionSettings(value: unknown): NutritionSettings {
       goal.minimum === undefined
         ? undefined
         : expectBoundedNumber(goal.minimum);
-    if (
-      period !== 'week' ||
-      minimum === undefined ||
-      minimum <= 0 ||
-      goal.maximum !== undefined
-    )
+    if (minimum === undefined || minimum <= 0 || goal.maximum !== undefined)
       throw new Error('INVALID_APP_DATA');
+    if (period === 'week' && weeklyToDaily)
+      return {
+        nutrient,
+        period: 'day',
+        minimum: Math.max(1, Math.round(minimum / 7)),
+        enabled: goal.enabled,
+      };
     return {
       nutrient,
-      period: 'week',
-      enabled: goal.enabled,
+      period,
       minimum,
+      enabled: goal.enabled,
     };
   });
+  const goalKeys = goals.map((goal) => `${goal.nutrient}:${goal.period}`);
+  if (new Set(goalKeys).size !== goalKeys.length)
+    throw new Error('INVALID_APP_DATA');
   return {
     enabled: value.enabled,
     automaticEstimates:
@@ -898,6 +1012,7 @@ export function migrateAppData(value: unknown): AppData {
     version !== 3 &&
     version !== 4 &&
     version !== 5 &&
+    version !== 6 &&
     version !== APP_SCHEMA_VERSION
   )
     throw new Error('UNSUPPORTED_SCHEMA_VERSION');
@@ -973,17 +1088,32 @@ export function migrateAppData(value: unknown): AppData {
   const shopping = value.shopping.map((item): ShoppingItem => {
     if (!isRecord(item) || typeof item.checked !== 'boolean')
       throw new Error('INVALID_APP_DATA');
-    const category = expectString(item.category) as ShoppingItem['category'];
-    if (!shoppingCategories.includes(category))
-      throw new Error('INVALID_APP_DATA');
+    const name = expectString(item.name);
+    const category = migrateShoppingCategory(item.category, name);
     const id = expectString(item.id);
     if (!id || id.length > 200 || shoppingIds.has(id))
       throw new Error('INVALID_APP_DATA');
     shoppingIds.add(id);
+    const optionalText = (key: 'quantity' | 'detail' | 'foodId') => {
+      if (item[key] === undefined) return {};
+      const text = expectString(item[key]);
+      if (text.length > 500) throw new Error('INVALID_APP_DATA');
+      return text ? { [key]: text } : {};
+    };
+    for (const flag of ['optional', 'pantryCheck'] as const)
+      if (item[flag] !== undefined && typeof item[flag] !== 'boolean')
+        throw new Error('INVALID_APP_DATA');
     return {
       id,
-      name: expectString(item.name),
+      name,
+      ...optionalText('quantity'),
+      ...optionalText('detail'),
+      ...optionalText('foodId'),
       category,
+      ...(item.optional === true ? { optional: true } : {}),
+      ...(typeof item.pantryCheck === 'boolean'
+        ? { pantryCheck: item.pantryCheck }
+        : {}),
       checked: item.checked,
       origin: migrateShoppingOrigin(item.origin),
       ...(typeof item.source === 'string'
@@ -1025,21 +1155,29 @@ export function migrateAppData(value: unknown): AppData {
     ),
     onboardingDone: value.onboardingDone,
     installedSamplePacks,
-    nutritionSettings: migrateNutritionSettings(value.nutritionSettings),
+    nutritionSettings: migrateNutritionSettings(
+      value.nutritionSettings,
+      version !== APP_SCHEMA_VERSION,
+    ),
     // V4 keys were based on free text and cannot be mapped unambiguously.
-    // V5 already uses stable ingredient IDs and can be retained safely.
+    // V5 and later use stable ingredient IDs and are retained safely.
     foodOverrides:
-      version === APP_SCHEMA_VERSION || version === 5
+      version === APP_SCHEMA_VERSION || version === 6 || version === 5
         ? migrateFoodOverrides(value.foodOverrides)
         : {},
     customFoods:
-      version === APP_SCHEMA_VERSION
+      version === APP_SCHEMA_VERSION || version === 6
         ? migrateCustomFoods(value.customFoods)
         : [],
     recipeDrafts:
-      version === APP_SCHEMA_VERSION
+      version === APP_SCHEMA_VERSION || version === 6
         ? migrateRecipeDrafts(value.recipeDrafts, false, recipeIds)
         : [],
+    pantry: migratePantry(value.pantry),
+    foodAliases: migrateFoodAliases(value.foodAliases),
+    ...(value.aisleOrder !== undefined
+      ? { aisleOrder: migrateAisleOrder(value.aisleOrder) }
+      : {}),
     ...(typeof value.lastBackup === 'string' &&
     Number.isFinite(Date.parse(value.lastBackup))
       ? { lastBackup: value.lastBackup }

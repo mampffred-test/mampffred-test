@@ -312,3 +312,36 @@ test('verschlüsselt eigene Texte unverändert und bereinigt erst beim Import', 
     'Eigener Text mit Richtung',
   );
 });
+
+test('behält beim Wiederherstellen Bezüge auf mitgelieferte Katalog-Lebensmittel', async () => {
+  const data = createSeedData();
+  data.recipes[0].ingredients = [
+    {
+      id: 'feta',
+      name: 'Feta',
+      amount: '200',
+      unit: 'g',
+      note: 'zerbröselt',
+      optional: true,
+      foodLink: { kind: 'catalog', foodId: 'mf:feta' },
+    },
+    {
+      id: 'erfunden',
+      name: 'Erfunden',
+      amount: '1',
+      unit: 'Stück',
+      foodLink: { kind: 'catalog', foodId: 'mf:gibt-es-nicht' },
+    },
+  ];
+  data.pantry = { salz: 'always' };
+  data.aisleOrder = ['brot', 'obst-gemuese'];
+  const blob = await encryptBackup({ data, images: {} }, password);
+  const { payload } = await decryptBackup(new File([blob], 'backup'), password);
+  assert.deepEqual(
+    payload.data.recipes[0].ingredients[0],
+    data.recipes[0].ingredients[0],
+  );
+  assert.equal(payload.data.recipes[0].ingredients[1].foodLink, undefined);
+  assert.deepEqual(payload.data.pantry, { salz: 'always' });
+  assert.deepEqual(payload.data.aisleOrder, ['brot', 'obst-gemuese']);
+});

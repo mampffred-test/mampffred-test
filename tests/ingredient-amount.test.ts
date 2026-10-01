@@ -3,7 +3,7 @@ import test from 'node:test';
 import { scaledIngredientAmount } from '../lib/ingredient-amount.ts';
 
 test('unbestimmte Mengen werden nicht als null angezeigt oder eingekauft', () => {
-  for (const amount of ['', 'nach Belieben', '½']) {
+  for (const amount of ['', 'nach Belieben']) {
     assert.equal(scaledIngredientAmount(amount, 2), amount);
   }
 });
@@ -20,4 +20,12 @@ test('deutsche Dezimalmengen werden für Portionen und Einkauf korrekt skaliert'
   assert.equal(scaledIngredientAmount('1.000', 2), '2000');
   assert.equal(scaledIngredientAmount('250', 0.5), '125');
   assert.equal(scaledIngredientAmount('0', 2), '0');
+});
+
+test('Brüche skalieren mit und bleiben als Bruch lesbar', () => {
+  assert.equal(scaledIngredientAmount('½', 2), '1');
+  assert.equal(scaledIngredientAmount('½', 3), '1½');
+  assert.equal(scaledIngredientAmount('1 1/2', 0.5), '¾');
+  assert.equal(scaledIngredientAmount('¼', 1), '¼');
+  assert.equal(scaledIngredientAmount('½', 2, false), '½');
 });

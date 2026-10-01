@@ -11,6 +11,7 @@ import {
   installStandardRecipes,
   restoreStandardRecipes,
   standardRecipeCount,
+  standardRecipeTotal,
 } from '../lib/standard-recipes.ts';
 
 function worker(buildId = '111111111111', state = 'activated') {
@@ -93,6 +94,7 @@ test('manuelle Wiederherstellung ergänzt gelöschte Standards, bewahrt eigene R
 test('ein frischer Datenbestand enthält ausschließlich Standards und keine persönlichen Daten', () => {
   const fresh = installStandardRecipes(createEmptyData());
   assert.equal(standardRecipeCount(fresh), 21);
+  assert.equal(standardRecipeTotal(), standardRecipeCount(fresh));
   assert.deepEqual(fresh.plan, []);
   assert.deepEqual(fresh.recipeDrafts, []);
   assert.deepEqual(fresh.customFoods, []);

@@ -8,6 +8,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-pistazien-zitronen-spaghetti-v1',
     aliases: [
+      'imported:417a6c21c5c0d769db753599b6232316cd8cdb31131947d5324e6e222ecef4e8',
       'local:0d07594e-8b33-4e6a-8e95-b041805f461d',
       'imported:05c1b702bbcc4325d23cfe668f1e63330c06279786b7fdd8a9862a848c7bc1f0',
       'imported:f8cfe45fa3e76e240043c54e8da182d043b627d81e848e34dc1f8d0381dd8d9b',
@@ -27,41 +28,51 @@ export const additionalStandardRecipes: {
           amount: '500',
           unit: 'g',
           name: 'Spaghetti',
+          foodLink: { kind: 'catalog', foodId: 'mf:spaghetti' },
         },
         {
           amount: '100',
           unit: 'g',
-          name: 'Pistazienkerne, geröstet und gesalzen',
+          name: 'Pistazienkerne',
+          note: 'geröstet und gesalzen',
+          foodLink: { kind: 'catalog', foodId: 'mf:pistazie' },
         },
         {
           amount: '2',
           unit: 'Zehen',
           name: 'Knoblauch',
+          foodLink: { kind: 'catalog', foodId: 'mf:knoblauch' },
         },
         {
           amount: '100',
           unit: 'ml',
           name: 'Olivenöl',
+          foodLink: { kind: 'catalog', foodId: 'mf:olivenoel' },
         },
         {
           amount: '250',
           unit: 'g',
           name: 'Cherrytomaten',
+          foodLink: { kind: 'catalog', foodId: 'mf:cherrytomate' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Bio-Zitrone',
+          foodLink: { kind: 'catalog', foodId: 'mf:zitrone' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Geriebener Mozzarella',
+          foodLink: { kind: 'catalog', foodId: 'mf:mozzarella-gerieben' },
         },
         {
           amount: '30',
           unit: 'g',
-          name: '8-Kräuter-Mischung (TK), nach Belieben',
+          name: 'TK-8-Kräuter-Mischung',
+          optional: true,
+          foodLink: { kind: 'catalog', foodId: 'mf:kraeuter-tk' },
         },
         {
           amount: '',
@@ -83,6 +94,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-rote-bete-feta-auflauf-v1',
     aliases: [
+      'imported:c5ca0c544a52c6a9cc17c0ccb8fa0a1dc93c6e18ae2ffc0a20b283acf18c5268',
       'local:1d7f6c70-009a-4e8a-b3b7-0dd8d9a4d386',
       'imported:0a5b5bf69c2f9e9a8db061773ab1aca0158dffbddbda3af792d2278b39cb6756',
       'imported:975950c8d88a9765183374dab7f62234b9f2d833baf3e64bede07d067cddb421',
@@ -101,52 +113,64 @@ export const additionalStandardRecipes: {
         {
           amount: '500',
           unit: 'g',
-          name: 'Rote Bete, vorgekocht und vakuumiert',
+          name: 'Rote Bete',
+          note: 'vorgekocht und vakuumiert',
+          foodLink: { kind: 'catalog', foodId: 'mf:rote-bete' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Feta',
+          foodLink: { kind: 'catalog', foodId: 'mf:feta' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Zwiebel',
+          foodLink: { kind: 'catalog', foodId: 'mf:zwiebel' },
         },
         {
           amount: '20',
           unit: 'g',
-          name: 'Petersilie (TK)',
+          name: 'TK-Petersilie',
+          foodLink: { kind: 'catalog', foodId: 'mf:petersilie-tk' },
         },
         {
           amount: '10',
           unit: 'Stück',
-          name: 'Walnüsse (die Kerne verwenden)',
+          name: 'Walnüsse',
+          note: 'die Kerne verwenden',
+          foodLink: { kind: 'catalog', foodId: 'mf:walnuss' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Ciabatta',
+          foodLink: { kind: 'catalog', foodId: 'mf:ciabatta' },
         },
         {
           amount: '1',
           unit: 'EL',
           name: 'Essig',
+          foodLink: { kind: 'catalog', foodId: 'mf:essig' },
         },
         {
           amount: '5',
           unit: 'EL',
           name: 'Olivenöl',
+          foodLink: { kind: 'catalog', foodId: 'mf:olivenoel' },
         },
         {
           amount: '5',
           unit: 'EL',
           name: 'Wasser',
+          foodLink: { kind: 'catalog', foodId: 'mf:wasser' },
         },
         {
           amount: '',
           unit: '',
           name: 'Gewürze nach Wahl',
+          foodLink: { kind: 'catalog', foodId: 'mf:gewuerze' },
         },
       ],
       steps: [
@@ -162,6 +186,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-selbst-belegte-pizza-v1',
     aliases: [
+      'imported:85729c11e0999f8c709d039475b558e758a442f595b2ea3e5a813fef37dbf038',
       'local:e7f5b306-8b5b-4b6e-bcb8-f445557ba348',
       'imported:1544129f1405bc2a108fcaa41687f241b2eaabfecdbdb7cdc7b6a054124d03bf',
       'imported:ac51ff527c8834caa8c3c07381406299dd9212b3a53dad876577782d6ef5f276',
@@ -180,47 +205,57 @@ export const additionalStandardRecipes: {
         {
           amount: '1',
           unit: 'Stück',
-          name: 'Pizzateig für ein Blech',
+          name: 'Pizzateig',
+          note: 'für ein Blech',
+          foodLink: { kind: 'catalog', foodId: 'mf:pizzateig' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Tomatensauce',
+          foodLink: { kind: 'catalog', foodId: 'mf:tomatensauce' },
         },
         {
           amount: '1',
           unit: 'Dose',
           name: 'Ananas in Stücken',
+          foodLink: { kind: 'catalog', foodId: 'mf:ananas-stuecke' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Feta',
+          foodLink: { kind: 'catalog', foodId: 'mf:feta' },
         },
         {
           amount: '250',
           unit: 'g',
           name: 'Cherrytomaten',
+          foodLink: { kind: 'catalog', foodId: 'mf:cherrytomate' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Zwiebel',
+          foodLink: { kind: 'catalog', foodId: 'mf:zwiebel' },
         },
         {
           amount: '0,5',
           unit: 'Stück',
           name: 'Zucchini',
+          foodLink: { kind: 'catalog', foodId: 'mf:zucchini' },
         },
         {
           amount: '250',
           unit: 'g',
           name: 'Geriebener Mozzarella',
+          foodLink: { kind: 'catalog', foodId: 'mf:mozzarella-gerieben' },
         },
         {
           amount: '100',
           unit: 'g',
           name: 'Rucola',
+          foodLink: { kind: 'catalog', foodId: 'mf:rucola' },
         },
       ],
       steps: [
@@ -236,6 +271,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-gemueselasagne-v1',
     aliases: [
+      'imported:c4e675362c51b3e8cb865b6d1d1134473bb42e7aae66bce4988db2aed13b8917',
       'imported:755655e9120fc4cd2006936335c203154b8ecacc65515fa10d4497f004fe8587',
     ],
     recipe: {
@@ -253,56 +289,70 @@ export const additionalStandardRecipes: {
           amount: '250',
           unit: 'g',
           name: 'Lasagneplatten',
+          foodLink: { kind: 'catalog', foodId: 'mf:lasagneplatten' },
         },
         {
           amount: '2',
           unit: 'Dosen',
           name: 'gehackte Tomaten',
+          foodLink: { kind: 'catalog', foodId: 'mf:gehackte-tomaten' },
         },
         {
           amount: '200',
           unit: 'ml',
           name: 'Soja-Cuisine',
+          foodLink: { kind: 'catalog', foodId: 'mf:soja-cuisine' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Zucchini',
+          foodLink: { kind: 'catalog', foodId: 'mf:zucchini' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Paprika',
+          foodLink: { kind: 'catalog', foodId: 'mf:paprika' },
         },
         {
           amount: '2',
           unit: 'Stück',
-          name: 'Optional: Möhren',
+          name: 'Möhren',
+          optional: true,
+          foodLink: { kind: 'catalog', foodId: 'mf:moehre' },
         },
         {
           amount: '150',
           unit: 'g',
-          name: 'Optional: Mais',
+          name: 'Mais',
+          optional: true,
+          foodLink: { kind: 'catalog', foodId: 'mf:mais' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'geriebener Mozzarella oder Edamer',
+          foodLink: { kind: 'catalog', foodId: 'mf:mozzarella-gerieben' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Zwiebel',
+          foodLink: { kind: 'catalog', foodId: 'mf:zwiebel' },
         },
         {
           amount: '2',
           unit: 'Stück',
           name: 'Knoblauchzehen',
+          foodLink: { kind: 'catalog', foodId: 'mf:knoblauch' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Etwas Öl zum Einfetten und Anbraten',
+          name: 'Öl',
+          note: 'etwas, zum Einfetten und Anbraten',
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
         {
           amount: '',
@@ -324,6 +374,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-couscous-salat-mit-gebratenem-gemuese-und-raeuchertofu-v1',
     aliases: [
+      'imported:45a68fa3506fea31392c4611a6cdff7c16d4eb969b00cc8607e857c651bcddf6',
       'imported:8c18793379363cc14a40c9c6134dd6a693b7ba466244c565ab12cdef8fa8759d',
     ],
     recipe: {
@@ -341,57 +392,74 @@ export const additionalStandardRecipes: {
         {
           amount: '200',
           unit: 'ml',
-          name: 'Couscous (1 Glas)',
+          name: 'Couscous',
+          note: '1 Glas à 200 ml',
+          foodLink: { kind: 'catalog', foodId: 'mf:couscous' },
         },
         {
           amount: '400',
           unit: 'ml',
-          name: 'Wasser (2 Gläser à 200 ml)',
+          name: 'Wasser',
+          note: '2 Gläser à 200 ml',
+          foodLink: { kind: 'catalog', foodId: 'mf:wasser' },
         },
         {
           amount: '1,5',
           unit: 'TL',
           name: 'Gemüsebrühe',
+          foodLink: { kind: 'catalog', foodId: 'mf:gemuesebruehe' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Paprika',
+          foodLink: { kind: 'catalog', foodId: 'mf:paprika' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Zucchini',
+          foodLink: { kind: 'catalog', foodId: 'mf:zucchini' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Zwiebel',
+          foodLink: { kind: 'catalog', foodId: 'mf:zwiebel' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Salatherz',
+          foodLink: { kind: 'catalog', foodId: 'mf:salatherz' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Räuchertofu',
+          foodLink: { kind: 'catalog', foodId: 'mf:raeuchertofu' },
         },
         {
           amount: '200',
           unit: 'g',
-          name: 'Halloumi optional: als Ersatz für den Räuchertofu oder zusätzlich',
+          name: 'Halloumi',
+          note: 'als Ersatz für den Räuchertofu oder zusätzlich',
+          optional: true,
+          foodLink: { kind: 'catalog', foodId: 'mf:halloumi' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Etwas Öl zum Anbraten',
+          name: 'Öl',
+          note: 'etwas, zum Anbraten',
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Leinöl oder Olivenöl zum Darübergeben',
+          name: 'Leinöl oder Olivenöl',
+          note: 'zum Darübergeben',
+          foodLink: { kind: 'catalog', foodId: 'mf:leinoel' },
         },
         {
           amount: '',
@@ -413,6 +481,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-ofen-risotto-mit-brechbohnen-v1',
     aliases: [
+      'imported:6ddf412702f3d631672a731eada6cce811d3e189d461ce6b504034f2bfa50205',
       'imported:306f58e0e164ef3207c79a83dfdea2790f1e3b7fafd4c92eb48b4092c11ef47c',
     ],
     recipe: {
@@ -430,46 +499,58 @@ export const additionalStandardRecipes: {
           amount: '300',
           unit: 'g',
           name: 'Risottoreis',
+          foodLink: { kind: 'catalog', foodId: 'mf:risottoreis' },
         },
         {
           amount: '800',
           unit: 'ml',
-          name: 'Gemüsebrühe, zusätzlich heiße Brühe nach Bedarf',
+          name: 'Gemüsebrühe',
+          note: 'zusätzlich heiße Brühe nach Bedarf',
+          foodLink: { kind: 'catalog', foodId: 'mf:gemuesebruehe' },
         },
         {
           amount: '300',
           unit: 'g',
-          name: 'Brechbohnen, tiefgekühlt',
+          name: 'TK-Brechbohnen',
+          foodLink: { kind: 'catalog', foodId: 'mf:brechbohnen-tk' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Paprika',
+          foodLink: { kind: 'catalog', foodId: 'mf:paprika' },
         },
         {
           amount: '200',
           unit: 'g',
-          name: 'Optional: Brokkoli',
+          name: 'Brokkoli',
+          optional: true,
+          foodLink: { kind: 'catalog', foodId: 'mf:brokkoli' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Zwiebel',
+          foodLink: { kind: 'catalog', foodId: 'mf:zwiebel' },
         },
         {
           amount: '1',
           unit: 'Stück',
-          name: 'Optional: Knoblauchzehe',
+          name: 'Knoblauchzehe',
+          optional: true,
+          foodLink: { kind: 'catalog', foodId: 'mf:knoblauch' },
         },
         {
           amount: '1',
           unit: 'EL',
           name: 'Öl',
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
         {
           amount: '50',
           unit: 'g',
           name: 'geriebener Käse',
+          foodLink: { kind: 'catalog', foodId: 'mf:kaese-gerieben' },
         },
         {
           amount: '',
@@ -490,6 +571,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-feta-pasta-aus-dem-ofen-v1',
     aliases: [
+      'imported:ae21d8d071464f32ea9378e6e9f8510028eae6929af5c0e139937e1fc388c957',
       'imported:eb38cab6a56fae01dc449948445bee34fc908b7f427d0de68a8176409bdd9bea',
     ],
     recipe: {
@@ -506,38 +588,45 @@ export const additionalStandardRecipes: {
         {
           amount: '500',
           unit: 'g',
-          name: 'Nudeln (Spaghetti, Locken, Spirelli oder eine andere Form)',
+          name: 'Nudeln',
+          note: 'Spaghetti, Locken, Spirelli oder eine andere Form',
           scaleWithServings: true,
+          foodLink: { kind: 'catalog', foodId: 'mf:nudeln' },
         },
         {
           amount: '500',
           unit: 'g',
           name: 'Cherrytomaten',
           scaleWithServings: false,
+          foodLink: { kind: 'catalog', foodId: 'mf:cherrytomate' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Feta',
           scaleWithServings: false,
+          foodLink: { kind: 'catalog', foodId: 'mf:feta' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Zwiebel',
           scaleWithServings: false,
+          foodLink: { kind: 'catalog', foodId: 'mf:zwiebel' },
         },
         {
           amount: '2',
           unit: 'Stück',
           name: 'Knoblauchzehen',
           scaleWithServings: false,
+          foodLink: { kind: 'catalog', foodId: 'mf:knoblauch' },
         },
         {
           amount: '2',
           unit: 'EL',
           name: 'Öl',
           scaleWithServings: false,
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
         {
           amount: '',
@@ -560,6 +649,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-halloumi-wraps-v1',
     aliases: [
+      'imported:115c1968382ef03d9d4c87fef7dc2ecc48e6ee8849c7ecd601e4b7326dadf45f',
       'imported:e94a14875c3f8b7f6ad0fe4048a7127ea8c75af42d917a881476b79411dec3fa',
     ],
     recipe: {
@@ -577,41 +667,51 @@ export const additionalStandardRecipes: {
           amount: '2',
           unit: 'Stück',
           name: 'große Wraps',
+          foodLink: { kind: 'catalog', foodId: 'mf:wraps' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Halloumi',
+          foodLink: { kind: 'catalog', foodId: 'mf:halloumi' },
         },
         {
           amount: '0,5',
           unit: 'Stück',
           name: 'Gurke',
+          foodLink: { kind: 'catalog', foodId: 'mf:gurke' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Paprika',
+          foodLink: { kind: 'catalog', foodId: 'mf:paprika' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'kleine Zwiebel',
+          foodLink: { kind: 'catalog', foodId: 'mf:zwiebel' },
         },
         {
           amount: '1',
           unit: 'Handvoll',
           name: 'Salat',
+          foodLink: { kind: 'catalog', foodId: 'mf:salat' },
         },
         {
           amount: '2',
           unit: 'EL',
-          name: 'Dressing nach Wahl (gekauft oder selbst gemachtes Joghurt-Zitronen-Dressing) (Menge ca.)',
+          name: 'Dressing nach Wahl',
+          note: 'gekauft oder Joghurt-Zitronen-Dressing, Menge ca.',
+          foodLink: { kind: 'catalog', foodId: 'mf:salatdressing' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Etwas Öl zum Braten',
+          name: 'Öl',
+          note: 'etwas, zum Braten',
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
         {
           amount: '',
@@ -631,6 +731,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-halloumi-burger-v1',
     aliases: [
+      'imported:debe541c3d2b5958c8aab0d0de24fd168caf9e8dc76efd1576d4eaae24d14627',
       'imported:1b540e5a790c871cb7895ce5c76fa70312f5bbfe357f698516d9cf0812ec7ab5',
     ],
     recipe: {
@@ -648,31 +749,38 @@ export const additionalStandardRecipes: {
           amount: '4',
           unit: 'Stück',
           name: 'Burger-Buns',
+          foodLink: { kind: 'catalog', foodId: 'mf:burger-buns' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Halloumi',
+          foodLink: { kind: 'catalog', foodId: 'mf:halloumi' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Fleischtomate',
+          foodLink: { kind: 'catalog', foodId: 'mf:fleischtomate' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Zwiebel',
+          foodLink: { kind: 'catalog', foodId: 'mf:zwiebel' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Salatblätter (Herzsalat)',
+          name: 'Salatblätter',
+          note: 'Herzsalat',
+          foodLink: { kind: 'catalog', foodId: 'mf:salat' },
         },
         {
           amount: '',
           unit: '',
           name: 'Burgersauce nach Wahl',
+          foodLink: { kind: 'catalog', foodId: 'mf:burgersauce' },
         },
         {
           amount: '',
@@ -682,12 +790,17 @@ export const additionalStandardRecipes: {
         {
           amount: '',
           unit: '',
-          name: 'Optional: etwas Zucker zum Karamellisieren der Zwiebeln',
+          name: 'Zucker',
+          note: 'etwas, zum Karamellisieren der Zwiebeln',
+          optional: true,
+          foodLink: { kind: 'catalog', foodId: 'mf:zucker' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Etwas Öl zum Braten',
+          name: 'Öl',
+          note: 'etwas, zum Braten',
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
       ],
       steps: [
@@ -701,6 +814,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-sommerrollen-mit-raeuchertofu-v1',
     aliases: [
+      'imported:f146353c8e2b88e53d2d9e462f992cf3ca9fd6eb396529cb0dfff1bfa2156d87',
       'imported:db7ae24ece4941b5c828ebc04ca13d95e6a043dd86c46f799ca5106bb3a688b3',
     ],
     recipe: {
@@ -718,61 +832,79 @@ export const additionalStandardRecipes: {
           amount: '8',
           unit: 'Stück',
           name: 'Reispapierblätter',
+          foodLink: { kind: 'catalog', foodId: 'mf:reispapier' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Räuchertofu',
+          foodLink: { kind: 'catalog', foodId: 'mf:raeuchertofu' },
         },
         {
           amount: '0,5',
           unit: 'Stück',
           name: 'Gurke',
+          foodLink: { kind: 'catalog', foodId: 'mf:gurke' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Paprika',
+          foodLink: { kind: 'catalog', foodId: 'mf:paprika' },
         },
         {
           amount: '2',
           unit: 'Stück',
           name: 'Frühlingszwiebeln',
+          foodLink: { kind: 'catalog', foodId: 'mf:fruehlingszwiebel' },
         },
         {
           amount: '',
           unit: '',
           name: 'Koriander nach Geschmack',
+          foodLink: { kind: 'catalog', foodId: 'mf:koriander' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Etwas Öl zum Braten',
+          name: 'Öl',
+          note: 'etwas, zum Braten',
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
         {
           amount: '2',
           unit: 'EL',
-          name: 'Sojasauce (für die Erdnuss-Sojasauce)',
+          name: 'Sojasauce',
+          note: 'für die Erdnuss-Sojasauce',
+          foodLink: { kind: 'catalog', foodId: 'mf:sojasauce' },
         },
         {
           amount: '2',
           unit: 'EL',
-          name: 'Erdnussmus (für die Erdnuss-Sojasauce)',
+          name: 'Erdnussmus',
+          note: 'für die Erdnuss-Sojasauce',
+          foodLink: { kind: 'catalog', foodId: 'mf:erdnussmus' },
         },
         {
           amount: '0,5',
           unit: 'Stück',
-          name: 'Zitrone, Saft (für die Erdnuss-Sojasauce)',
+          name: 'Zitrone',
+          note: 'Saft, für die Erdnuss-Sojasauce',
+          foodLink: { kind: 'catalog', foodId: 'mf:zitrone' },
         },
         {
           amount: '1',
           unit: 'Stück',
-          name: 'Knoblauchzehe (für die Erdnuss-Sojasauce)',
+          name: 'Knoblauchzehe',
+          note: 'für die Erdnuss-Sojasauce',
+          foodLink: { kind: 'catalog', foodId: 'mf:knoblauch' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Wasser nach Bedarf zum Verdünnen (für die Erdnuss-Sojasauce)',
+          name: 'Wasser',
+          note: 'zum Verdünnen der Erdnuss-Sojasauce',
+          foodLink: { kind: 'catalog', foodId: 'mf:wasser' },
         },
       ],
       steps: [
@@ -787,6 +919,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-mildes-gemuesecurry-mit-reis-v1',
     aliases: [
+      'imported:04a81b37d14d2d885dd7b5811236c6daa754424b95f9e019b881e8d4466aca29',
       'imported:fc1ea24428b79815a5e4a3511c280c4fa29d203f3df85d690ded06c32bf8366a',
     ],
     recipe: {
@@ -804,36 +937,43 @@ export const additionalStandardRecipes: {
           amount: '150',
           unit: 'g',
           name: 'Reis',
+          foodLink: { kind: 'catalog', foodId: 'mf:reis' },
         },
         {
           amount: '400',
           unit: 'ml',
           name: 'Kokosmilch',
+          foodLink: { kind: 'catalog', foodId: 'mf:kokosmilch' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Zucchini',
+          foodLink: { kind: 'catalog', foodId: 'mf:zucchini' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Brokkoli',
+          foodLink: { kind: 'catalog', foodId: 'mf:brokkoli' },
         },
         {
           amount: '150',
           unit: 'g',
           name: 'Zuckerschoten',
+          foodLink: { kind: 'catalog', foodId: 'mf:zuckerschote' },
         },
         {
           amount: '1–2',
           unit: 'EL',
           name: 'milde Currypaste',
+          foodLink: { kind: 'catalog', foodId: 'mf:currypaste' },
         },
         {
           amount: '1',
           unit: 'EL',
           name: 'Öl',
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
       ],
       steps: [
@@ -848,6 +988,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-gnocchi-auflauf-mit-gruenem-spargel-tomaten-und-feta-v1',
     aliases: [
+      'imported:b9d5e9a1caf04ad0beb6c31aa56212896b7622f8e8e2de2b3bf91b8ad0d79774',
       'imported:e052c0ef71c8bc2d53e07bba5c1fb2002e8a993f57a8c292481f0a5387f5d0b2',
     ],
     recipe: {
@@ -864,47 +1005,58 @@ export const additionalStandardRecipes: {
         {
           amount: '400',
           unit: 'g',
-          name: 'Gnocchi (ungekocht, aus dem Kühlregal)',
+          name: 'Gnocchi',
+          note: 'ungekocht, aus dem Kühlregal',
+          foodLink: { kind: 'catalog', foodId: 'mf:gnocchi' },
         },
         {
           amount: '300',
           unit: 'g',
           name: 'grüner Spargel',
+          foodLink: { kind: 'catalog', foodId: 'mf:spargel-gruen' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Cherrytomaten',
+          foodLink: { kind: 'catalog', foodId: 'mf:cherrytomate' },
         },
         {
           amount: '30',
           unit: 'g',
           name: 'getrocknete Tomaten',
+          foodLink: { kind: 'catalog', foodId: 'mf:getrocknete-tomaten' },
         },
         {
           amount: '200',
           unit: 'g',
-          name: 'Feta (eine Packung)',
+          name: 'Feta',
+          note: 'eine Packung',
+          foodLink: { kind: 'catalog', foodId: 'mf:feta' },
         },
         {
           amount: '3',
           unit: 'EL',
           name: 'Olivenöl',
+          foodLink: { kind: 'catalog', foodId: 'mf:olivenoel' },
         },
         {
           amount: '100',
           unit: 'ml',
           name: 'Gemüsebrühe',
+          foodLink: { kind: 'catalog', foodId: 'mf:gemuesebruehe' },
         },
         {
           amount: '2',
           unit: 'Stück',
           name: 'Knoblauchzehen',
+          foodLink: { kind: 'catalog', foodId: 'mf:knoblauch' },
         },
         {
           amount: '1',
           unit: 'TL',
           name: 'getrocknete italienische Kräuter',
+          foodLink: { kind: 'catalog', foodId: 'mf:italienische-kraeuter' },
         },
         {
           amount: '',
@@ -914,7 +1066,9 @@ export const additionalStandardRecipes: {
         {
           amount: '2–3',
           unit: 'EL',
-          name: 'Optional: grünes Pesto',
+          name: 'grünes Pesto',
+          optional: true,
+          foodLink: { kind: 'catalog', foodId: 'mf:pesto' },
         },
       ],
       steps: [
@@ -931,6 +1085,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-ofengemuese-mit-raeuchertofu-feta-und-quark-v1',
     aliases: [
+      'imported:3b24482df67b00be85191f368f57dcadd7416f721ba536c3fefbe08abfd695f9',
       'imported:ec3dda8027ffc81526d15b833be667c9af896990e4d1cc41aa5cd4de21a695d9',
     ],
     recipe: {
@@ -948,51 +1103,62 @@ export const additionalStandardRecipes: {
           amount: '300',
           unit: 'g',
           name: 'Drillinge oder 300 g Süßkartoffel',
+          foodLink: { kind: 'catalog', foodId: 'mf:kartoffel' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Paprika',
+          foodLink: { kind: 'catalog', foodId: 'mf:paprika' },
         },
         {
           amount: '2',
           unit: 'Stück',
           name: 'Möhren',
+          foodLink: { kind: 'catalog', foodId: 'mf:moehre' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Zucchini',
+          foodLink: { kind: 'catalog', foodId: 'mf:zucchini' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'kleiner Brokkoli',
+          foodLink: { kind: 'catalog', foodId: 'mf:brokkoli' },
         },
         {
           amount: '250',
           unit: 'g',
-          name: 'Rote Bete, vorgekocht',
+          name: 'Rote Bete',
+          note: 'vorgekocht',
+          foodLink: { kind: 'catalog', foodId: 'mf:rote-bete' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Räuchertofu',
+          foodLink: { kind: 'catalog', foodId: 'mf:raeuchertofu' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Feta',
+          foodLink: { kind: 'catalog', foodId: 'mf:feta' },
         },
         {
           amount: '500',
           unit: 'g',
           name: 'Quark',
+          foodLink: { kind: 'catalog', foodId: 'mf:quark' },
         },
         {
           amount: '2',
           unit: 'EL',
           name: 'Öl',
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
         {
           amount: '',
@@ -1012,6 +1178,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-toast-hawaii-v1',
     aliases: [
+      'imported:953da9f63950b1d02b1deeb7d22f6058d6f68dc4fd277fe45caa5385a79633fb',
       'imported:0e0140c2f2a2e4673566eaa4e8261d88566517796e03df3b257aa0c99989af07',
     ],
     recipe: {
@@ -1028,21 +1195,25 @@ export const additionalStandardRecipes: {
           amount: '4',
           unit: 'Scheiben',
           name: 'Toastbrot',
+          foodLink: { kind: 'catalog', foodId: 'mf:toastbrot' },
         },
         {
           amount: '4',
           unit: 'Stück',
           name: 'Ananasscheiben',
+          foodLink: { kind: 'catalog', foodId: 'mf:ananasscheiben' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Tomate',
+          foodLink: { kind: 'catalog', foodId: 'mf:tomate' },
         },
         {
           amount: '4',
           unit: 'Stück',
           name: 'Käsescheiben',
+          foodLink: { kind: 'catalog', foodId: 'mf:kaesescheiben' },
         },
       ],
       steps: [
@@ -1055,6 +1226,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-sandwichmaker-sandwiches-v1',
     aliases: [
+      'imported:4f886b4a6b5071cf6576e7c758f82c16c2a370de16f8cb7d8f9e311f2c5367ee',
       'imported:c98bdb1fd57f859952884e235af15e30dcb3635251067612488b72147df74f4e',
     ],
     recipe: {
@@ -1071,32 +1243,44 @@ export const additionalStandardRecipes: {
         {
           amount: '8',
           unit: 'Stück',
-          name: 'Toastscheiben (für 4 Sandwiches)',
+          name: 'Toastscheiben',
+          note: 'für 4 Sandwiches',
+          foodLink: { kind: 'catalog', foodId: 'mf:toastbrot' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Butter zum Bestreichen',
+          name: 'Butter',
+          note: 'zum Bestreichen',
+          foodLink: { kind: 'catalog', foodId: 'mf:butter' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Tomaten, in Scheiben',
+          name: 'Tomaten',
+          note: 'in Scheiben',
+          foodLink: { kind: 'catalog', foodId: 'mf:tomate' },
         },
         {
           amount: '4',
           unit: 'Stück',
-          name: 'Käsescheiben (eine pro Sandwich)',
+          name: 'Käsescheiben',
+          note: 'eine pro Sandwich',
+          foodLink: { kind: 'catalog', foodId: 'mf:kaesescheiben' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Etwas Öl oder Fett für den Sandwichmaker, falls kein Backpapier verwendet wird',
+          name: 'Öl oder Fett',
+          note: 'etwas, für den Sandwichmaker, falls kein Backpapier verwendet wird',
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Dip nach Wahl zum Servieren',
+          name: 'Dip',
+          note: 'nach Wahl zum Servieren',
+          foodLink: { kind: 'catalog', foodId: 'mf:dip' },
         },
       ],
       steps: [
@@ -1110,6 +1294,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-vegetarisches-huehnerfrikassee-mit-kraeuterseitlingen-v1',
     aliases: [
+      'imported:9e3b81af1c351a337ee69c4ea9aa50d23430e81d16c112bb75934e9c4eb95041',
       'imported:33a2eac0ccd070dc910c9ffcc9e1376a81afa0fba49e08b4e898a250e6d95c00',
     ],
     recipe: {
@@ -1128,56 +1313,68 @@ export const additionalStandardRecipes: {
           amount: '8',
           unit: 'Stück',
           name: 'Kräuterseitlinge',
+          foodLink: { kind: 'catalog', foodId: 'mf:kraeuterseitling' },
         },
         {
           amount: '4',
           unit: 'Stück',
           name: 'mittelgroße Möhren',
+          foodLink: { kind: 'catalog', foodId: 'mf:moehre' },
         },
         {
           amount: '2',
           unit: 'Stück',
           name: 'Zwiebeln',
+          foodLink: { kind: 'catalog', foodId: 'mf:zwiebel' },
         },
         {
           amount: '300',
           unit: 'g',
-          name: 'Erbsen, tiefgekühlt',
+          name: 'TK-Erbsen',
+          foodLink: { kind: 'catalog', foodId: 'mf:erbsen-tk' },
         },
         {
           amount: '2',
           unit: 'Stück',
           name: 'Kohlrabi',
+          foodLink: { kind: 'catalog', foodId: 'mf:kohlrabi' },
         },
         {
           amount: '400',
           unit: 'g',
           name: 'weißer Spargel aus dem Glas',
+          foodLink: { kind: 'catalog', foodId: 'mf:spargel-glas' },
         },
         {
           amount: '300',
           unit: 'ml',
           name: 'Hafer-Cuisine oder Soja-Cuisine',
+          foodLink: { kind: 'catalog', foodId: 'mf:hafer-cuisine' },
         },
         {
           amount: '2',
           unit: 'EL',
           name: 'Mehl',
+          foodLink: { kind: 'catalog', foodId: 'mf:mehl' },
         },
         {
           amount: '2',
           unit: 'TL',
           name: 'Gemüsebrühe beziehungsweise Gemüsebrühepulver',
+          foodLink: { kind: 'catalog', foodId: 'mf:gemuesebruehe' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Naturreis',
+          foodLink: { kind: 'catalog', foodId: 'mf:naturreis' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Öl zum Anbraten',
+          name: 'Öl',
+          note: 'zum Anbraten',
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
         {
           amount: '',
@@ -1187,7 +1384,10 @@ export const additionalStandardRecipes: {
         {
           amount: '',
           unit: '',
-          name: 'Optional: etwas Spargelwasser zum Verdünnen',
+          name: 'Spargelwasser',
+          note: 'aus dem Spargelglas, zum Verdünnen',
+          optional: true,
+          foodLink: { kind: 'catalog', foodId: 'mf:wasser' },
         },
       ],
       steps: [
@@ -1206,6 +1406,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-kuerbissuppe-mit-raeuchertofu-v1',
     aliases: [
+      'imported:a1fb5c79b64f6c3c171db28473fd96ace5fccc81797c74e78cbb19b872607f69',
       'imported:97a45d5073a8298b0a36066b98108313645f6cc8f8f2a53fc319b047a0e6abb5',
     ],
     recipe: {
@@ -1222,47 +1423,59 @@ export const additionalStandardRecipes: {
         {
           amount: '1',
           unit: 'Stück',
-          name: 'mittelgroßer Hokkaido-Kürbis (ca. 1 kg)',
+          name: 'Hokkaido-Kürbis',
+          note: 'mittelgroß, ca. 1 kg',
+          foodLink: { kind: 'catalog', foodId: 'mf:hokkaido' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Süßkartoffel',
+          foodLink: { kind: 'catalog', foodId: 'mf:suesskartoffel' },
         },
         {
           amount: '2',
           unit: 'Stück',
           name: 'Möhren',
+          foodLink: { kind: 'catalog', foodId: 'mf:moehre' },
         },
         {
           amount: '20',
           unit: 'g',
-          name: 'Ingwer (Menge ca.)',
+          name: 'Ingwer',
+          note: 'Menge ca.',
+          foodLink: { kind: 'catalog', foodId: 'mf:ingwer' },
         },
         {
           amount: '800',
           unit: 'ml',
           name: 'Gemüsebrühe',
+          foodLink: { kind: 'catalog', foodId: 'mf:gemuesebruehe' },
         },
         {
           amount: '400',
           unit: 'ml',
           name: 'Kokosmilch',
+          foodLink: { kind: 'catalog', foodId: 'mf:kokosmilch' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Räuchertofu',
+          foodLink: { kind: 'catalog', foodId: 'mf:raeuchertofu' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Baguette',
+          foodLink: { kind: 'catalog', foodId: 'mf:baguette' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Etwas Öl',
+          name: 'Öl',
+          note: 'etwas',
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
         {
           amount: '',
@@ -1283,6 +1496,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-zucchini-feta-roellchen-mit-cherrytomaten-v1',
     aliases: [
+      'imported:a441e666864388b46cc190efdc43757d8acf2167fd2d8efe817ec638335451a9',
       'imported:6ff43e89cec4f7ef267b528e3d2922eee48fb885e98797f1e2f2823e2f1feedf',
     ],
     recipe: {
@@ -1300,26 +1514,31 @@ export const additionalStandardRecipes: {
           amount: '1',
           unit: 'Stück',
           name: 'Zucchini',
+          foodLink: { kind: 'catalog', foodId: 'mf:zucchini' },
         },
         {
           amount: '100',
           unit: 'g',
           name: 'Feta',
+          foodLink: { kind: 'catalog', foodId: 'mf:feta' },
         },
         {
           amount: '8',
           unit: 'Stück',
           name: 'Cherrytomaten',
+          foodLink: { kind: 'catalog', foodId: 'mf:cherrytomate' },
         },
         {
           amount: '4',
           unit: 'Stück',
           name: 'Schaschlikspieße',
+          foodLink: { kind: 'catalog', foodId: 'mf:schaschlikspiesse' },
         },
         {
           amount: '1',
           unit: 'EL',
           name: 'Öl',
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
         {
           amount: '',
@@ -1339,6 +1558,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-gemuesesuppe-mit-brokkoli-v1',
     aliases: [
+      'imported:ff463f11b97fbccf5d37722102a48853575001b9718ba04e75df0bf354d366d2',
       'imported:9b8a365877f76e825000097497a39e57de3462362137362e0cf10907e5e0ba53',
     ],
     recipe: {
@@ -1355,27 +1575,36 @@ export const additionalStandardRecipes: {
         {
           amount: '1',
           unit: 'Bund',
-          name: 'Suppengemüse (ca. 500 g)',
+          name: 'Suppengemüse',
+          note: 'ca. 500 g',
+          foodLink: { kind: 'catalog', foodId: 'mf:suppengemuese' },
         },
         {
           amount: '1',
           unit: 'Stück',
-          name: 'Brokkoli (ca. 300 g)',
+          name: 'Brokkoli',
+          note: 'ca. 300 g',
+          foodLink: { kind: 'catalog', foodId: 'mf:brokkoli' },
         },
         {
           amount: '300',
           unit: 'g',
-          name: 'Kartoffeln (alternativ je 300 g Kartoffeln: 100 g Muschelnudeln)',
+          name: 'Kartoffeln',
+          note: 'alternativ je 300 g Kartoffeln: 100 g Muschelnudeln',
+          foodLink: { kind: 'catalog', foodId: 'mf:kartoffel' },
         },
         {
           amount: '1,5',
           unit: 'l',
-          name: 'Gemüsebrühe; nach Bedarf so viel, dass das Gemüse bedeckt ist (Menge ca.)',
+          name: 'Gemüsebrühe',
+          note: 'so viel, dass das Gemüse bedeckt ist',
+          foodLink: { kind: 'catalog', foodId: 'mf:gemuesebruehe' },
         },
         {
           amount: '1',
           unit: 'EL',
           name: 'Öl',
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
         {
           amount: '',
@@ -1402,6 +1631,7 @@ export const additionalStandardRecipes: {
   {
     pack: 'mampffred-salat-mit-raeuchertofu-oder-halloumi-v1',
     aliases: [
+      'imported:abb6156e36fe04412c82097d1ba495a7544263a02dac647e8d695376d742f60f',
       'imported:dba7c6687caf19280c1330345bb6dfb1a33ac2df1ca88ff3b83588c9a8e9e0e9',
     ],
     recipe: {
@@ -1419,46 +1649,56 @@ export const additionalStandardRecipes: {
           amount: '1',
           unit: 'Stück',
           name: 'Salatherz',
+          foodLink: { kind: 'catalog', foodId: 'mf:salatherz' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Paprika',
+          foodLink: { kind: 'catalog', foodId: 'mf:paprika' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Apfel',
+          foodLink: { kind: 'catalog', foodId: 'mf:apfel' },
         },
         {
           amount: '1',
           unit: 'Stück',
           name: 'Gurke',
+          foodLink: { kind: 'catalog', foodId: 'mf:gurke' },
         },
         {
           amount: '200',
           unit: 'g',
           name: 'Räuchertofu oder alternativ 200 g Halloumi',
+          foodLink: { kind: 'catalog', foodId: 'mf:raeuchertofu' },
         },
         {
           amount: '',
           unit: '',
-          name: 'Etwas Öl zum Anbraten',
+          name: 'Öl',
+          note: 'etwas, zum Anbraten',
+          foodLink: { kind: 'catalog', foodId: 'mf:oel' },
         },
         {
           amount: '1',
           unit: 'EL',
           name: 'Senf',
+          foodLink: { kind: 'catalog', foodId: 'mf:senf' },
         },
         {
           amount: '2',
           unit: 'EL',
           name: 'heller Balsamico',
+          foodLink: { kind: 'catalog', foodId: 'mf:balsamico' },
         },
         {
           amount: '2',
           unit: 'EL',
           name: 'Wasser',
+          foodLink: { kind: 'catalog', foodId: 'mf:wasser' },
         },
         {
           amount: '',

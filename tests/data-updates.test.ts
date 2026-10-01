@@ -112,3 +112,28 @@ test('Bildreferenzen umfassen Rezepte und sämtliche Entwürfe', () => {
   ];
   assert.equal(referencedImageKeys(data).has('shared'), true);
 });
+
+test('behält unveränderte Objekte, damit Zwischenspeicher gültig bleiben', () => {
+  const current = validateDataUpdate(createEmptyData(), (data) => ({
+    ...data,
+    recipes: createSampleRecipes(),
+    foodAliases: { 'mein kase': 'mf:feta' },
+  }));
+  const next = validateDataUpdate(current, (data) => ({
+    ...data,
+    recipes: data.recipes.map((recipe, index) =>
+      index === 0 ? { ...recipe, favorite: !recipe.favorite } : recipe,
+    ),
+  }));
+  assert.notStrictEqual(next.recipes[0], current.recipes[0]);
+  assert.equal(next.recipes[0].favorite, !current.recipes[0].favorite);
+  assert.strictEqual(next.recipes[1], current.recipes[1]);
+  assert.strictEqual(
+    next.recipes[1].ingredients[0],
+    current.recipes[1].ingredients[0],
+  );
+  assert.strictEqual(next.foodAliases, current.foodAliases);
+  assert.strictEqual(next.customFoods, current.customFoods);
+  assert.strictEqual(next.foodOverrides, current.foodOverrides);
+  assert.strictEqual(next.pantry, current.pantry);
+});

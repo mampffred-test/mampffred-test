@@ -239,14 +239,14 @@ test('weist doppelte Einkaufslisten-IDs zurück', () => {
     {
       id: 'doppelt',
       name: 'Paprika',
-      category: 'Gemüse & Obst',
+      category: 'obst-gemuese',
       checked: false,
       origin: { kind: 'manual' },
     },
     {
       id: 'doppelt',
       name: 'Reis',
-      category: 'Vorrat',
+      category: 'trocken',
       checked: false,
       origin: { kind: 'manual' },
     },

@@ -1,3 +1,4 @@
+import { catalogFoodById } from './food-catalog.ts';
 import { sanitizeImportedData } from './imported-text.ts';
 import type { AppData } from './model';
 import { migrateAppData } from './model.ts';
@@ -159,8 +160,11 @@ function quarantineImportedData(data: AppData): AppData {
     ...recipe,
     ingredients: recipe.ingredients.map((sourceIngredient) => {
       const { foodLink, ...ingredient } = sourceIngredient;
-      void foodLink;
-      return ingredient;
+      // Links into the bundled catalog cannot carry forged values; links to
+      // imported own foods or raw BLS entries stay quarantined.
+      return foodLink?.kind === 'catalog' && catalogFoodById(foodLink.foodId)
+        ? { ...ingredient, foodLink }
+        : ingredient;
     }),
     ...(recipe.nutrition
       ? {

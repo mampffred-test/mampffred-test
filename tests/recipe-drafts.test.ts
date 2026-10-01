@@ -6,6 +6,7 @@ import {
   removeRecipeDraft,
   replaceRecipeFoodOverrides,
   upsertRecipeDraft,
+  normalizeEditedIngredients,
 } from '../lib/recipe-drafts.ts';
 import { ingredientOverrideKey } from '../lib/food-nutrition.ts';
 import type { RecipeDraft } from '../lib/model.ts';
@@ -105,4 +106,37 @@ test('legt für unveränderte Standardwerte oder Leerzeichen keinen leeren Entwu
     }),
     false,
   );
+});
+
+test('speichert Zutaten mit fixer Menge, Notiz, Optional und Katalogbezug', () => {
+  const saved = normalizeEditedIngredients(
+    [
+      {
+        id: 'a',
+        amount: ' 200 ',
+        unit: ' g ',
+        name: ' Feta ',
+        scaleWithServings: false,
+        note: '  zerbröselt ',
+        optional: true,
+        foodLink: { kind: 'catalog', foodId: 'mf:feta' },
+      },
+      { id: 'b', amount: '', unit: '', name: '   ' },
+      { amount: '1', unit: 'Stück', name: 'Zwiebel', note: '   ' },
+    ],
+    () => 'neu',
+  );
+  assert.deepEqual(saved, [
+    {
+      id: 'a',
+      amount: '200',
+      unit: 'g',
+      name: 'Feta',
+      scaleWithServings: false,
+      note: 'zerbröselt',
+      optional: true,
+      foodLink: { kind: 'catalog', foodId: 'mf:feta' },
+    },
+    { id: 'neu', amount: '1', unit: 'Stück', name: 'Zwiebel' },
+  ]);
 });

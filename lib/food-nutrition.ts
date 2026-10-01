@@ -1,3 +1,11 @@
+import {
+  catalogFoodById,
+  CATALOG_ID_PREFIX,
+  foldFoodName,
+  foodGrams,
+  matchCatalogFoods,
+} from './food-catalog.ts';
+import { splitIngredientName } from './ingredient-text.ts';
 import type {
   CustomFood,
   NutrientKey,
@@ -5,6 +13,8 @@ import type {
   Recipe,
   RecipeNutrition,
 } from './model.ts';
+import { quantityValue } from './quantity.ts';
+import { canonicalUnit } from './units.ts';
 
 export type FoodReference = {
   needsReview?: boolean;
@@ -30,6 +40,12 @@ export type IngredientResolutionStatus =
   | 'user-confirmed'
   | 'custom-value'
   | 'ignored'
+  /** Salt, spices, water: too little to matter. */
+  | 'negligible'
+  /** Marked optional; the estimate is for the dish without it. */
+  | 'optional'
+  /** The recipe gives no amount ("etwas Öl"); not counted. */
+  | 'no-amount'
   | 'amount-unresolved'
   | 'unresolved';
 
@@ -52,6 +68,13 @@ export type RecipeIngredientCalculation = {
   totalIngredients: number;
   assumedAmounts: number;
   ignoredIngredients: number;
+  /** Optional, unquantified or negligible ingredients left out of the sum. */
+  notCountedIngredients: number;
+};
+
+export type CalculationOptions = {
+  /** Folded ingredient name -> food reference id, learned globally. */
+  foodAliases?: Record<string, string>;
 };
 
 export function customFoodToReference(food: CustomFood): FoodReference {
@@ -296,9 +319,15 @@ export function convertIngredientToGrams(
   unit: string,
   food?: FoodReference,
 ): { grams: number; quality: 'direct' | 'assumed' } | undefined {
-  const quantity = parseAmount(amount);
+  const quantity = quantityValue(amount) ?? parseAmount(amount);
   if (quantity === undefined) return undefined;
-  const normalizedUnit = normalizeUnit(unit);
+  if (food?.id.startsWith(CATALOG_ID_PREFIX)) {
+    const catalogFood = catalogFoodById(food.id);
+    if (catalogFood) return foodGrams(catalogFood, quantity, unit);
+  }
+  const canonical = canonicalUnit(unit);
+  const normalizedUnit =
+    canonical === undefined ? normalizeUnit(unit) : canonical || 'stueck';
   if (normalizedUnit === 'g') return { grams: quantity, quality: 'direct' };
   if (normalizedUnit === 'kg')
     return { grams: quantity * 1_000, quality: 'direct' };
@@ -354,11 +383,28 @@ export function ingredientOverrideKey(recipeId: string, ingredientId: string) {
   return `recipe-${inputFingerprint(`${recipeId}\0${ingredientId}`)}`;
 }
 
+const foodIndexes = new WeakMap<
+  readonly FoodReference[],
+  Map<string, FoodReference>
+>();
+
+/** id -> food, built once per catalog array (7 000 BLS entries are costly). */
+function foodIndex(catalog: readonly FoodReference[]) {
+  let index = foodIndexes.get(catalog);
+  if (!index) {
+    index = new Map(catalog.map((food) => [food.id, food]));
+    foodIndexes.set(catalog, index);
+  }
+  return index;
+}
+
 export function calculateRecipeFromIngredients(
   recipe: Pick<Recipe, 'id' | 'ingredients'>,
   catalog: readonly FoodReference[],
   overrides: Record<string, IngredientNutritionOverride> = {},
+  options: CalculationOptions = {},
 ): RecipeIngredientCalculation {
+  const foodsById = foodIndex(catalog);
   const ingredients = recipe.ingredients
     .map((ingredient, ingredientIndex) => ({ ingredient, ingredientIndex }))
     .filter(({ ingredient }) => ingredient.name.trim())
@@ -369,16 +415,58 @@ export function calculateRecipeFromIngredients(
         ingredient.id ?? `ingredient-${ingredientIndex}`,
       );
       const override = overrides[overrideKey];
+      const excluded = (status: 'negligible' | 'optional' | 'no-amount') => ({
+        ingredientIndex,
+        normalizedName,
+        overrideKey,
+        status,
+        nutrients: {},
+      });
+      if (
+        !override &&
+        (ingredient.optional ?? splitIngredientName(ingredient.name).optional)
+      )
+        return excluded('optional');
       const linkedFood = ingredient.foodLink
-        ? catalog.find((food) => food.id === ingredient.foodLink?.foodId)
+        ? foodsById.get(ingredient.foodLink.foodId)
         : undefined;
+      const catalogFoods = ingredient.foodLink
+        ? []
+        : matchCatalogFoods(ingredient.name);
+      const learnedId =
+        options.foodAliases?.[foldFoodName(ingredient.name)] ?? undefined;
+      const learnedFood = learnedId ? foodsById.get(learnedId) : undefined;
+      const catalogReference =
+        catalogFoods.length === 1
+          ? foodsById.get(`${CATALOG_ID_PREFIX}${catalogFoods[0].id}`)
+          : undefined;
+      if (
+        !override &&
+        !linkedFood &&
+        !learnedFood &&
+        (ingredient.foodLink?.kind === 'catalog'
+          ? catalogFoodById(ingredient.foodLink.foodId)?.nutrition === false
+          : catalogFoods.length > 0 &&
+            catalogFoods.every((food) => food.nutrition === false))
+      )
+        return excluded('negligible');
       const resolution = override
         ? resolveIngredient(ingredient.name, catalog, override)
         : ingredient.foodLink
           ? linkedFood && !linkedFood.needsReview
             ? { status: 'user-confirmed' as const, food: linkedFood }
             : { status: 'unresolved' as const }
-          : resolveIngredient(ingredient.name, catalog);
+          : learnedFood && !learnedFood.needsReview
+            ? { status: 'user-confirmed' as const, food: learnedFood }
+            : catalogReference
+              ? { status: 'automatic' as const, food: catalogReference }
+              : resolveIngredient(ingredient.name, catalog);
+      const amountMissing =
+        override?.kind !== 'whole-ingredient' &&
+        quantityValue(ingredient.amount) === undefined &&
+        !/\d/.test(ingredient.amount);
+      if (amountMissing && resolution.status !== 'ignored')
+        return excluded('no-amount');
       if (override?.kind === 'whole-ingredient') {
         const nutrients = Object.fromEntries(
           Object.entries(override.nutrients).filter(([, value]) =>
@@ -443,7 +531,13 @@ export function calculateRecipeFromIngredients(
       };
     });
 
-  const included = ingredients.filter((entry) => entry.status !== 'ignored');
+  const notCounted = new Set<IngredientResolutionStatus>([
+    'ignored',
+    'negligible',
+    'optional',
+    'no-amount',
+  ]);
+  const included = ingredients.filter((entry) => !notCounted.has(entry.status));
   const resolved = included.filter(
     (entry) =>
       entry.status === 'automatic' ||
@@ -538,6 +632,9 @@ export function calculateRecipeFromIngredients(
     ignoredIngredients: ingredients.filter(
       (entry) => entry.status === 'ignored',
     ).length,
+    notCountedIngredients: ingredients.filter(
+      (entry) => entry.status !== 'ignored' && notCounted.has(entry.status),
+    ).length,
   };
 }
 
@@ -561,4 +658,69 @@ export function mergeCalculatedNutrition(
   return Object.keys(wholeRecipe).length
     ? { wholeRecipe, enteredAs: 'whole-recipe', updatedAt }
     : undefined;
+}
+
+export type NutritionContext = {
+  foods: readonly FoodReference[];
+  overrides?: Record<string, IngredientNutritionOverride>;
+  foodAliases?: Record<string, string>;
+};
+
+const estimateCache = new WeakMap<
+  Recipe,
+  { context: NutritionContext; result: RecipeNutrition | undefined }
+>();
+
+function sameContext(left: NutritionContext, right: NutritionContext) {
+  return (
+    left.foods === right.foods &&
+    left.overrides === right.overrides &&
+    left.foodAliases === right.foodAliases
+  );
+}
+
+/**
+ * Current nutrition of a recipe: the user's own values plus a fresh
+ * estimate from its ingredients. Memoised per recipe object so lists can
+ * call it on every render.
+ */
+export function recipeNutritionEstimate(
+  recipe: Recipe,
+  context: NutritionContext,
+): RecipeNutrition | undefined {
+  const cached = estimateCache.get(recipe);
+  if (cached && sameContext(cached.context, context)) return cached.result;
+  const calculation = calculateRecipeFromIngredients(
+    recipe,
+    context.foods,
+    context.overrides,
+    { foodAliases: context.foodAliases },
+  );
+  const result = mergeCalculatedNutrition(
+    recipe.nutrition,
+    calculation,
+    recipe.nutrition?.updatedAt ?? '1970-01-01T00:00:00.000Z',
+  );
+  estimateCache.set(recipe, { context, result });
+  return result;
+}
+
+/**
+ * "Proteinreich": at least 25 g per portion, or at least 15 g with 20 % of
+ * the energy from protein (EU rule for "hoher Proteingehalt"). The floor keeps
+ * light salads with little absolute protein from being labelled.
+ */
+export function isHighProtein(perServing: {
+  proteinG?: number;
+  energyKcal?: number;
+}) {
+  const protein = perServing.proteinG ?? 0;
+  if (protein >= 25) return true;
+  const energy = perServing.energyKcal;
+  return (
+    protein >= 15 &&
+    energy !== undefined &&
+    energy > 0 &&
+    (protein * 4) / energy >= 0.2
+  );
 }

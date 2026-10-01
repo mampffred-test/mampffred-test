@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+
+import { INGREDIENT_UPGRADE_PACK } from '../lib/standard-recipe-upgrade.ts';
 import test from 'node:test';
 import { createEmptyData, migrateAppData } from '../lib/model.ts';
 import {
@@ -17,7 +19,7 @@ test('neue Nutzer erhalten 21 Rezepte mit vollständigen JPEG-Bildern', async ()
   const empty = createEmptyData();
   const installed = installStandardRecipes(empty);
   assert.equal(installed.recipes.length, 21);
-  assert.equal(installed.installedSamplePacks.length, 22);
+  assert.equal(installed.installedSamplePacks.length, 23);
   assert.equal(migrateAppData(installed).recipes.length, 21);
   assert.deepEqual(empty.recipes, []);
   const keys = newStandardImageKeys(empty, installed);
@@ -84,7 +86,7 @@ test('bereits importierte Premium-Rezepte bleiben ohne Duplikate oder Bildübers
   assert.equal(next.recipes.length, 21);
   assert.deepEqual(next.recipes, current.recipes);
   assert.deepEqual(newStandardImageKeys(current, next), []);
-  assert.equal(next.installedSamplePacks.length, 22);
+  assert.equal(next.installedSamplePacks.length, 23);
 });
 
 test('ursprüngliche lokale Rezepte behalten ihre eigenen Inhalte', () => {
@@ -111,8 +113,12 @@ test('bei wenig Platz wird nur erfolgreich hinzugefügten Rezepten eine Installa
   };
   const next = installStandardRecipes(current);
   assert.equal(next.recipes.length, 1000);
-  assert.equal(next.installedSamplePacks.length, 2);
+  const recipePacks = (data: typeof next) =>
+    data.installedSamplePacks.filter(
+      (pack) => pack !== INGREDIENT_UPGRADE_PACK,
+    );
+  assert.equal(recipePacks(next).length, 2);
   assert.strictEqual(installStandardRecipes(next), next);
   const withRoom = { ...next, recipes: next.recipes.slice(2) };
-  assert.equal(installStandardRecipes(withRoom).installedSamplePacks.length, 4);
+  assert.equal(recipePacks(installStandardRecipes(withRoom)).length, 4);
 });

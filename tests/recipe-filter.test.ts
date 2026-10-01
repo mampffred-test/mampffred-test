@@ -51,3 +51,29 @@ test('kuratierte Tags werden unabhängig von Großschreibung erkannt', () => {
   assert.deepEqual(filterRecipes([recipe], '', 'Gesund'), [recipe]);
   assert.deepEqual(filterRecipes([recipe], 'Familienessen', 'Alle'), []);
 });
+
+test('findet Rezepte über Synonyme ihrer Zutaten', () => {
+  const recipes = createSampleRecipes();
+  assert.deepEqual(
+    filterRecipes(recipes, 'Cherrytomaten', 'Alle').map(
+      (recipe) => recipe.name,
+    ),
+    ['Tomaten-Mozzarella-Pasta'],
+  );
+  assert.deepEqual(
+    filterRecipes(recipes, 'Möhren', 'Alle').map((recipe) => recipe.name),
+    [],
+  );
+});
+
+test('filtert proteinreiche Rezepte über eine übergebene Einschätzung', () => {
+  const recipes = createSampleRecipes();
+  const result = filterRecipes(recipes, '', 'Proteinreich', {
+    isHighProtein: (recipe) => recipe.id === 'curry',
+  });
+  assert.deepEqual(
+    result.map((recipe) => recipe.id),
+    ['curry'],
+  );
+  assert.deepEqual(filterRecipes(recipes, '', 'Proteinreich'), []);
+});

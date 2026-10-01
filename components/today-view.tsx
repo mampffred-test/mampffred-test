@@ -7,6 +7,7 @@ import {
   CloudAlert,
   Plus,
   RefreshCw,
+  Dumbbell,
   Settings,
   ShieldCheck,
   Shuffle,
@@ -26,6 +27,8 @@ import {
 import { getEnabledMealSlots, visibleMealPlan } from '@/lib/meal-slots';
 import type { AppData, MealSlot, PlannedDay, Recipe } from '@/lib/model';
 import { visibleRecipeTags } from '@/lib/recipe-filter';
+import { aggregateNutritionDay, proteinDailyGoal } from '@/lib/nutrition';
+import { useRecipeNutrition } from './nutrition-context';
 import { IconButton } from './icon-button';
 import {
   MealSlotIcon,
@@ -560,6 +563,47 @@ function TomorrowPreview({
   );
 }
 
+/** Planned protein for today, for the person (not the whole household). */
+function TodayProtein({ data, today }: { data: AppData; today: string }) {
+  const nutritionOf = useRecipeNutrition();
+  const settings = data.nutritionSettings;
+  if (!settings.enabled || !settings.automaticEstimates) return null;
+  const day = aggregateNutritionDay(data, today, nutritionOf);
+  if (!day.mealCount) return null;
+  const protein = day.nutrients.proteinG;
+  const goal = proteinDailyGoal(settings);
+  const value = protein.value;
+  const share = value !== null && goal ? Math.min(1, value / goal) : 0;
+  return (
+    <section className="td-protein" aria-label="Protein heute">
+      <span className="td-protein-icon" aria-hidden="true">
+        <Dumbbell size={18} />
+      </span>
+      <div>
+        <strong>
+          {value === null
+            ? 'Protein heute noch offen'
+            : `ca. ${Math.round(value)} g Protein heute`}
+        </strong>
+        <small>
+          {value === null
+            ? 'Für eine Mahlzeit fehlen noch Angaben.'
+            : goal
+              ? value >= goal
+                ? `Dein Ziel von ${Math.round(goal)} g ist mit dem Plan erreicht.`
+                : `Noch ca. ${Math.round(goal - value)} g bis zu deinem Ziel von ${Math.round(goal)} g.`
+              : `Aus ${day.mealCount === 1 ? 'einer geplanten Mahlzeit' : `${day.mealCount} geplanten Mahlzeiten`}.`}
+        </small>
+        {goal && value !== null ? (
+          <span className="td-protein-bar" aria-hidden="true">
+            <i style={{ transform: `scaleX(${share})` }} />
+          </span>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 export function TodayView({
   data,
   now,
@@ -725,6 +769,7 @@ export function TodayView({
               />
             ))}
           </div>
+          <TodayProtein data={data} today={today} />
           <TomorrowPreview
             data={data}
             date={tomorrow}

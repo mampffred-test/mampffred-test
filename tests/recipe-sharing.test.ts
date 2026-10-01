@@ -318,3 +318,61 @@ test('Datei-Identitäten können weder Beispiele belegen noch Wiederimporte umge
     first.shareId,
   );
 });
+
+test('teilt Notizen, Optionales und Katalogbezug, aber keine privaten Lebensmittel', async () => {
+  const [base] = createSampleRecipes();
+  const recipe = {
+    ...base,
+    ingredients: [
+      {
+        id: 'a',
+        amount: '2',
+        unit: 'Zehe',
+        name: 'Knoblauch',
+        note: 'fein gehackt',
+        optional: true,
+        foodLink: { kind: 'catalog' as const, foodId: 'mf:knoblauch' },
+      },
+      {
+        id: 'b',
+        amount: '100',
+        unit: 'g',
+        name: 'Mein Brot',
+        foodLink: { kind: 'custom' as const, foodId: 'custom:geheim' },
+      },
+      {
+        id: 'c',
+        amount: '1',
+        unit: 'Stück',
+        name: 'Fantasie',
+        foodLink: { kind: 'catalog' as const, foodId: 'mf:gibt-es-nicht' },
+      },
+    ],
+  };
+  const parsed = await parseSharedRecipe(serializeSharedRecipe(recipe));
+  assert.deepEqual(parsed.ingredients[0], {
+    id: 'shared-ingredient-1',
+    amount: '2',
+    unit: 'Zehe',
+    name: 'Knoblauch',
+    note: 'fein gehackt',
+    optional: true,
+    foodLink: { kind: 'catalog', foodId: 'mf:knoblauch' },
+  });
+  assert.equal(parsed.ingredients[1].foodLink, undefined);
+  assert.equal(
+    JSON.parse(serializeSharedRecipe(recipe)).recipe.ingredients[1].foodLink,
+    undefined,
+  );
+  const forged = JSON.parse(serializeSharedRecipe(recipe));
+  forged.recipe.ingredients[2].foodLink = {
+    kind: 'catalog',
+    foodId: 'mf:gibt-es-nicht',
+  };
+  const fromForged = await parseSharedRecipe(JSON.stringify(forged));
+  assert.equal(fromForged.ingredients[2].foodLink, undefined);
+  assert.match(
+    formatSharedRecipeText(recipe),
+    /- 2 Zehe Knoblauch, fein gehackt \(optional\)/,
+  );
+});

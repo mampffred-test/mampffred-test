@@ -75,17 +75,20 @@ test('Wocheneinkauf berechnet feste Mengen pro Kochvorgang und passt nur Nudeln 
     ],
   };
   const once = reconcileWeekShopping(input, '2026-09-28');
-  assert.ok(once.shopping.some((i) => i.name.startsWith('250 g Nudeln')));
-  assert.ok(once.shopping.some((i) => i.name === '500 g Cherrytomaten'));
-  assert.ok(once.shopping.some((i) => i.name === '200 g Feta'));
+  const item = (result: typeof once, name: string) =>
+    result.shopping.find((entry) => entry.name === name);
+  assert.match(item(once, 'Nudeln')?.detail ?? '', /^250 g /);
+  assert.equal(item(once, 'Cherrytomaten')?.quantity, '2 Schalen à 250 g');
+  assert.equal(item(once, 'Feta')?.quantity, '1 Packung (200 g)');
   input.plan.push({
     date: '2026-09-29',
     meals: [{ slot: 'Abendessen', recipeId: recipe.id, servings: 3 }],
   });
   const twice = reconcileWeekShopping(input, '2026-09-28');
-  assert.ok(twice.shopping.some((i) => i.name.startsWith('625 g Nudeln')));
-  assert.ok(twice.shopping.some((i) => i.name === '1.000 g Cherrytomaten'));
-  assert.ok(twice.shopping.some((i) => i.name === '400 g Feta'));
+  assert.match(item(twice, 'Nudeln')?.detail ?? '', /^625 g /);
+  assert.equal(item(twice, 'Nudeln')?.quantity, '2 Packungen à 500 g');
+  assert.equal(item(twice, 'Cherrytomaten')?.quantity, '4 Schalen à 250 g');
+  assert.equal(item(twice, 'Feta')?.quantity, '2 Packungen à 200 g');
 });
 
 test('bestehende vier Standards erhalten genau 17 Ergänzungen ohne Überschreiben', () => {

@@ -28,7 +28,43 @@ export function validateDataUpdate(
         `Es sind höchstens ${DATA_LIMITS[key].toLocaleString('de-DE')} ${labels[key]} möglich. Bitte entferne zuerst einen Eintrag.`,
       );
   }
-  return migrateAppData(next);
+  return preserveUnchanged(current, migrateAppData(next));
+}
+
+function sameJson(left: unknown, right: unknown) {
+  return left === right || JSON.stringify(left) === JSON.stringify(right);
+}
+
+/**
+ * Validation rebuilds every object. Reusing the previous objects for content
+ * that did not change keeps identity-based caches (nutrition estimates,
+ * search indexes) valid, which matters on slow phones.
+ */
+function preserveUnchanged(previous: AppData, next: AppData): AppData {
+  const previousRecipes = new Map(
+    previous.recipes.map((recipe) => [recipe.id, recipe]),
+  );
+  const recipes = next.recipes.map((recipe) => {
+    const before = previousRecipes.get(recipe.id);
+    return before && sameJson(before, recipe) ? before : recipe;
+  });
+  const keep = <
+    K extends 'customFoods' | 'foodOverrides' | 'foodAliases' | 'pantry',
+  >(
+    key: K,
+  ) => (sameJson(previous[key], next[key]) ? previous[key] : next[key]);
+  return {
+    ...next,
+    recipes:
+      recipes.length === previous.recipes.length &&
+      recipes.every((recipe, index) => recipe === previous.recipes[index])
+        ? previous.recipes
+        : recipes,
+    customFoods: keep('customFoods'),
+    foodOverrides: keep('foodOverrides'),
+    foodAliases: keep('foodAliases'),
+    pantry: keep('pantry'),
+  };
 }
 
 export function referencedImageKeys(data: AppData) {

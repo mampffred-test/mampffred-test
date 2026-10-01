@@ -9,14 +9,18 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
-import { parseLocalDate } from '@/lib/local-date';
+import { catalogFoodById } from '@/lib/food-catalog';
+import { leftoverBonus } from '@/lib/leftovers';
+import { parseLocalDate, startOfLocalWeek } from '@/lib/local-date';
 import {
   preferredServings,
   proposeMeals,
   rankRecipesForSlot,
   type FreeSlot,
   type PlanProposal,
+  type RecipeBonus,
 } from '@/lib/meal-planning';
+import { estimateLeftovers } from '@/lib/week-shopping';
 import type { AppData, MealSlot } from '@/lib/model';
 import { IconButton } from './icon-button';
 import {
@@ -46,8 +50,26 @@ export function QuickPlanSheet({
   const sheetExit = useAnimatedSheetClose(onClose);
   const dialogRef = useModalFocus<HTMLElement>(sheetExit.close);
   const sheetSwipe = useSheetSwipeToClose(onClose);
+  // Leftovers of what is already planned: recipes that use them rank first.
+  const [leftovers] = useState(() =>
+    targets[0]
+      ? estimateLeftovers(
+          data,
+          startOfLocalWeek(parseLocalDate(targets[0].date)),
+        )
+      : [],
+  );
+  const leftoverIds = new Set(leftovers.map((entry) => entry.foodId));
+  const bonus: RecipeBonus = (recipe, claimed) => {
+    const result = leftoverBonus(
+      recipe,
+      new Set([...leftoverIds].filter((id) => !claimed.has(id))),
+      data.foodAliases,
+    );
+    return { score: result.score, claims: result.foods };
+  };
   const propose = () =>
-    proposeMeals({ recipes: data.recipes, plan: data.plan, targets });
+    proposeMeals({ recipes: data.recipes, plan: data.plan, targets, bonus });
   const [proposals, setProposals] = useState<PlanProposal[]>(propose);
   const [skipped, setSkipped] = useState<ReadonlySet<string>>(new Set());
   const [servings, setServings] = useState(() =>
@@ -72,6 +94,7 @@ export function QuickPlanSheet({
         date: target.date,
         slot: target.slot,
         exclude: [...others, target.recipeId],
+        bonus,
       })[0] ??
       rankRecipesForSlot({
         recipes: data.recipes,
@@ -124,6 +147,15 @@ export function QuickPlanSheet({
               Wiederholungen. Tippe auf <RefreshCw size={13} /> für eine andere
               Idee.
             </p>
+            {leftovers.length > 0 && (
+              <p className="qp-leftovers">
+                Reste aus deinem Plan:{' '}
+                <strong>
+                  {leftovers.map((entry) => entry.label).join(', ')}
+                </strong>
+                . Rezepte, die sie verwerten, stehen vorne.
+              </p>
+            )}
           </div>
           <IconButton label="Schließen" onClick={sheetExit.close}>
             <X size={20} />
@@ -195,6 +227,21 @@ export function QuickPlanSheet({
                         {entry.slot}
                       </small>
                       <strong key={rolled[key] ?? 0}>{recipe.name}</strong>
+                      {(() => {
+                        const used = leftoverBonus(
+                          recipe,
+                          leftoverIds,
+                          data.foodAliases,
+                        ).foods;
+                        return used.length ? (
+                          <em className="qp-uses">
+                            verwertet{' '}
+                            {used
+                              .map((id) => catalogFoodById(id)?.name ?? id)
+                              .join(', ')}
+                          </em>
+                        ) : null;
+                      })()}
                     </span>
                   </button>
                   <button

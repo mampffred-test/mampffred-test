@@ -1,3 +1,4 @@
+import { catalogFoodById } from './food-catalog.ts';
 import type { Recipe } from './model.ts';
 import { createEmptyData, migrateAppData } from './model.ts';
 import {
@@ -38,7 +39,11 @@ type SharedRecipeEnvelope = {
       amount: string;
       unit: string;
       name: string;
+      note?: string;
+      optional?: boolean;
       scaleWithServings?: boolean;
+      /** Only catalog links travel; private foods stay on the device. */
+      foodLink?: { kind: 'catalog'; foodId: string };
     }>;
     steps: string[];
   };
@@ -61,11 +66,26 @@ export function serializeSharedRecipe(recipe: Recipe) {
       servings: recipe.servings,
       tags: visibleRecipeTags(recipe),
       ingredients: recipe.ingredients.map(
-        ({ amount, unit, name, scaleWithServings }) => ({
+        ({
           amount,
           unit,
           name,
+          note,
+          optional,
+          scaleWithServings,
+          foodLink,
+        }) => ({
+          amount,
+          unit,
+          name,
+          ...(note ? { note } : {}),
+          ...(optional ? { optional: true } : {}),
           ...(scaleWithServings !== undefined ? { scaleWithServings } : {}),
+          ...(foodLink?.kind === 'catalog'
+            ? {
+                foodLink: { kind: 'catalog' as const, foodId: foodLink.foodId },
+              }
+            : {}),
         }),
       ),
       steps: recipe.steps,
@@ -268,9 +288,9 @@ export function formatSharedRecipeText(recipe: Recipe) {
       (ingredient) =>
         `- ${[ingredient.amount, ingredient.unit, ingredient.name]
           .filter(Boolean)
-          .join(
-            ' ',
-          )}${ingredient.scaleWithServings === false ? ' (Menge bleibt bei Portionsänderung gleich)' : ''}`,
+          .join(' ')}${ingredient.note ? `, ${ingredient.note}` : ''}${
+          ingredient.optional ? ' (optional)' : ''
+        }${ingredient.scaleWithServings === false ? ' (Menge bleibt bei Portionsänderung gleich)' : ''}`,
     )
     .join('\n');
   const steps = recipe.steps
@@ -409,14 +429,29 @@ export async function parseSharedRecipe(contents: string): Promise<Recipe> {
         tags: sanitizeImportedTextList(recipe.tags),
         ingredients: recipe.ingredients.map((ingredient, index) => {
           if (!isRecord(ingredient)) throw new Error('INVALID_SHARED_RECIPE');
+          const note =
+            ingredient.note === undefined
+              ? ''
+              : sanitizeImportedText(ingredient.note);
+          const link = ingredient.foodLink;
+          const catalogLink =
+            isRecord(link) &&
+            link.kind === 'catalog' &&
+            typeof link.foodId === 'string' &&
+            catalogFoodById(link.foodId)
+              ? { kind: 'catalog' as const, foodId: link.foodId }
+              : undefined;
           return {
             id: `shared-ingredient-${index + 1}`,
             amount: sanitizeImportedText(ingredient.amount),
             unit: sanitizeImportedText(ingredient.unit),
             name: sanitizeImportedText(ingredient.name),
+            ...(note ? { note } : {}),
+            ...(ingredient.optional === true ? { optional: true } : {}),
             ...(ingredient.scaleWithServings !== undefined
               ? { scaleWithServings: ingredient.scaleWithServings }
               : {}),
+            ...(catalogLink ? { foodLink: catalogLink } : {}),
           };
         }),
         steps: sanitizeImportedTextList(recipe.steps),

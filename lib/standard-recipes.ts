@@ -1,5 +1,6 @@
 import type { AppData, Recipe } from './model.ts';
 import { additionalStandardRecipes } from './standard-recipe-catalog.ts';
+import { upgradeStandardRecipeIngredients } from './standard-recipe-upgrade.ts';
 
 export function restoreStandardRecipes(data: AppData): AppData {
   const packs = new Set([
@@ -12,6 +13,11 @@ export function restoreStandardRecipes(data: AppData): AppData {
       (pack) => !packs.has(pack),
     ),
   });
+}
+
+/** How many standard recipes Mampffred ships with. */
+export function standardRecipeTotal(): number {
+  return 1 + additionalStandardRecipes.length;
 }
 
 export function standardRecipeCount(data: AppData): number {
@@ -79,51 +85,64 @@ export function createCannelloniRecipe(): Recipe {
         amount: '250',
         unit: 'g',
         name: 'Cannelloni',
+        foodLink: { kind: 'catalog', foodId: 'mf:cannelloni' },
       },
       {
         amount: '200',
         unit: 'g',
         name: 'Frischkäse',
+        foodLink: { kind: 'catalog', foodId: 'mf:frischkaese' },
       },
       {
         amount: '450',
         unit: 'g',
-        name: 'Junger Spinat, gehackt (TK)',
+        name: 'TK-Spinat',
+        note: 'junger Spinat, gehackt',
+        foodLink: { kind: 'catalog', foodId: 'mf:spinat-tk' },
       },
       {
         amount: '1',
         unit: 'Stück',
-        name: 'Kleine Zucchini (alternativ ½ mittelgroße)',
+        name: 'Zucchini',
+        note: 'klein, alternativ ½ mittelgroße',
+        foodLink: { kind: 'catalog', foodId: 'mf:zucchini' },
       },
       {
         amount: '1',
         unit: 'Stück',
         name: 'Rote Zwiebel',
+        foodLink: { kind: 'catalog', foodId: 'mf:rote-zwiebel' },
       },
       {
         amount: '2',
         unit: 'Zehen',
         name: 'Knoblauch',
+        foodLink: { kind: 'catalog', foodId: 'mf:knoblauch' },
       },
       {
         amount: '2',
         unit: 'Dosen',
         name: 'Gehackte Tomaten',
+        foodLink: { kind: 'catalog', foodId: 'mf:gehackte-tomaten' },
       },
       {
         amount: '200',
         unit: 'ml',
         name: 'Hafercuisine',
+        foodLink: { kind: 'catalog', foodId: 'mf:hafer-cuisine' },
       },
       {
         amount: '250',
         unit: 'g',
         name: 'Geriebener Mozzarella',
+        foodLink: { kind: 'catalog', foodId: 'mf:mozzarella-gerieben' },
       },
       {
         amount: '',
         unit: '',
-        name: 'Bratöl zum Dünsten und Einfetten',
+        name: 'Bratöl',
+        note: 'zum Dünsten und Einfetten',
+        foodLink: { kind: 'catalog', foodId: 'mf:oel' },
       },
       {
         amount: '',
@@ -182,6 +201,7 @@ export function installStandardRecipes(data: AppData): AppData {
     };
   }
   next = installHandoverImages(next);
+  next = upgradeStandardRecipeIngredients(next);
   // Replace only our earlier photograph; custom and removed photos stay intact.
   const previousImage =
     'standard-vegetarisches-huehnerfrikassee-mit-kraeuterseitlingen-image-v1';

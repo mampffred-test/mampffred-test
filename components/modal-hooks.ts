@@ -86,7 +86,8 @@ const EXPANDED_TOP_GAP = 16;
  * or the content (while scrolled to the top): upwards the sheet grows to
  * almost full height, downwards it shrinks back and, below its normal height,
  * slides away to close. Release snaps to the nearest detent, taking the flick
- * speed into account. Spread the result onto the sheet handle.
+ * speed into account. A tap on the dimmed backdrop slides the sheet away too.
+ * Spread the result onto the sheet handle.
  */
 export function useSheetSwipeToClose(onClose: () => void) {
   const onCloseRef = useRef(onClose);
@@ -123,7 +124,7 @@ export function useSheetSwipeToClose(onClose: () => void) {
     };
     const finish = (
       target: 'close' | 'medium' | 'large',
-      current: SheetDrag,
+      current: Pick<SheetDrag, 'height' | 'mediumHeight' | 'largeHeight'>,
     ) => {
       sheet.classList.remove('sheet-dragging');
       if (target === 'close' && prefersReducedMotion()) {
@@ -200,11 +201,16 @@ export function useSheetSwipeToClose(onClose: () => void) {
           drag.mode = 'ignore';
           return false;
         }
-        // From the content, only a downward pull at the very top drags.
-        if (dy <= 0 || sheet.scrollTop > 0) {
+        // From the content at the very top, a downward pull drags the sheet
+        // and an upward push first expands it before the content scrolls.
+        const expands =
+          dy < 0 && drag.canGrow && !sheet.classList.contains('is-expanded');
+        if ((dy <= 0 && !expands) || sheet.scrollTop > 0) {
           if (Math.abs(dy) > 4) drag.mode = 'ignore';
           return false;
         }
+        // Wait for a clear direction, so a tap with a jittery finger stays a tap.
+        if (Math.abs(dy) < 4) return false;
         drag.mode = 'drag';
       }
       if (!sheet.classList.contains('sheet-dragging'))
@@ -317,6 +323,34 @@ export function useSheetSwipeToClose(onClose: () => void) {
     const onPointerUp = (event: PointerEvent) => {
       if (event.pointerType !== 'touch') end(event.type === 'pointercancel');
     };
+    // Tapping the dimmed area closes the sheet. The press must start on the
+    // backdrop as well: a drag that ends outside the sheet is no tap.
+    let backdropPressed = false;
+    let dismissed = false;
+    const onBackdropPointerDown = (event: PointerEvent) => {
+      backdropPressed = event.isPrimary && event.target === backdrop;
+    };
+    const onBackdropClick = (event: MouseEvent) => {
+      const pressed = backdropPressed;
+      backdropPressed = false;
+      if (!pressed || event.target !== backdrop || drag || dismissed) return;
+      if (modalStack.at(-1) !== sheet) return;
+      if (sheet.classList.contains('sheet-closing')) return;
+      // With the keyboard open, the first tap outside only closes the
+      // keyboard, so typed text is not lost by accident.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && sheet.contains(active)) {
+        if (active.matches('input, textarea, [contenteditable="true"]')) {
+          active.blur();
+          return;
+        }
+      }
+      dismissed = true;
+      window.clearTimeout(timer);
+      sheet.classList.remove('sheet-dragging', 'sheet-snapping');
+      const height = sheet.offsetHeight;
+      finish('close', { height, mediumHeight: height, largeHeight: height });
+    };
 
     sheet.addEventListener('touchstart', onTouchStart, { passive: true });
     sheet.addEventListener('touchmove', onTouchMove, { passive: false });
@@ -326,7 +360,11 @@ export function useSheetSwipeToClose(onClose: () => void) {
     sheet.addEventListener('pointermove', onPointerMove);
     sheet.addEventListener('pointerup', onPointerUp);
     sheet.addEventListener('pointercancel', onPointerUp);
+    backdrop?.addEventListener('pointerdown', onBackdropPointerDown);
+    backdrop?.addEventListener('click', onBackdropClick);
     cleanupRef.current = () => {
+      backdrop?.removeEventListener('pointerdown', onBackdropPointerDown);
+      backdrop?.removeEventListener('click', onBackdropClick);
       window.clearTimeout(timer);
       sheet.removeEventListener('touchstart', onTouchStart);
       sheet.removeEventListener('touchmove', onTouchMove);

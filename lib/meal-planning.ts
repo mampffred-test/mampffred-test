@@ -100,6 +100,12 @@ const DAY_MS = 86_400_000;
  * close to the date rank lower so the week stays varied. `random` only breaks
  * near-ties, which keeps suggestions fresh without feeling arbitrary.
  */
+/** Extra points for a recipe, e.g. for using up leftovers. */
+export type RecipeBonus = (
+  recipe: Recipe,
+  claimed: ReadonlySet<string>,
+) => { score: number; claims: string[] };
+
 export function rankRecipesForSlot({
   recipes,
   plan,
@@ -107,6 +113,8 @@ export function rankRecipesForSlot({
   slot,
   exclude = [],
   random = Math.random,
+  bonus,
+  claimed = new Set(),
 }: {
   recipes: readonly Recipe[];
   plan: readonly PlannedDay[];
@@ -114,6 +122,8 @@ export function rankRecipesForSlot({
   slot: MealSlot;
   exclude?: readonly string[];
   random?: () => number;
+  bonus?: RecipeBonus;
+  claimed?: ReadonlySet<string>;
 }): Recipe[] {
   const target = parseLocalDate(date).getTime();
   const excluded = new Set(exclude);
@@ -132,7 +142,11 @@ export function rankRecipesForSlot({
     .map((recipe) => {
       const used = lastUse.get(recipe.id);
       const recency = used === undefined ? 0 : used <= 6 ? -6 : -2;
-      const score = (recipe.favorite ? 2 : 0) + recency + random() * 2.5;
+      const score =
+        (recipe.favorite ? 2 : 0) +
+        recency +
+        (bonus?.(recipe, claimed).score ?? 0) +
+        random() * 2.5;
       return { recipe, score };
     })
     .sort((left, right) => right.score - left.score)
@@ -147,14 +161,18 @@ export function proposeMeals({
   plan,
   targets,
   random = Math.random,
+  bonus,
 }: {
   recipes: readonly Recipe[];
   plan: readonly PlannedDay[];
   targets: readonly FreeSlot[];
   random?: () => number;
+  bonus?: RecipeBonus;
 }): PlanProposal[] {
   const used: string[] = [];
   const proposals: PlanProposal[] = [];
+  // A leftover is used up by the first recipe that takes it.
+  const claimed = new Set<string>();
   for (const target of targets) {
     const ranked = rankRecipesForSlot({
       recipes,
@@ -162,11 +180,15 @@ export function proposeMeals({
       ...target,
       exclude: used,
       random,
+      bonus,
+      claimed,
     });
     // Small collections may need to repeat a recipe rather than leave gaps.
     const recipe =
       ranked[0] ?? rankRecipesForSlot({ recipes, plan, ...target, random })[0];
     if (!recipe) continue;
+    for (const claim of bonus?.(recipe, claimed).claims ?? [])
+      claimed.add(claim);
     used.push(recipe.id);
     proposals.push({ ...target, recipeId: recipe.id });
   }

@@ -1,5 +1,26 @@
 import { visibleMealPlan } from './meal-slots.ts';
-import type { AppData, NutrientKey, Recipe } from './model.ts';
+import type {
+  AppData,
+  NutrientKey,
+  NutritionSettings,
+  Recipe,
+  RecipeNutrition,
+} from './model.ts';
+
+/** Supplies the effective nutrition of a recipe (stored or estimated). */
+export type RecipeNutritionResolver = (
+  recipe: Recipe,
+) => RecipeNutrition | undefined;
+
+const storedNutrition: RecipeNutritionResolver = (recipe) => recipe.nutrition;
+
+/** The person's daily protein goal in grams, if one is enabled. */
+export function proteinDailyGoal(settings: NutritionSettings) {
+  return settings.goals.find(
+    (goal) =>
+      goal.enabled && goal.nutrient === 'proteinG' && goal.period === 'day',
+  )?.minimum;
+}
 import { addLocalDays } from './local-date.ts';
 
 export const NUTRIENT_KEYS = [
@@ -63,8 +84,9 @@ function nutrientValue(
   recipe: Recipe,
   key: NutrientKey,
   allowDatasetValues: boolean,
+  nutritionOf: RecipeNutritionResolver = storedNutrition,
 ) {
-  const wholeRecipe = recipe.nutrition?.wholeRecipe;
+  const wholeRecipe = nutritionOf(recipe)?.wholeRecipe;
   if (!wholeRecipe || !Object.hasOwn(wholeRecipe, key)) return undefined;
   const nutrient = wholeRecipe[key];
   if (
@@ -115,6 +137,7 @@ function emptyNutrients(totalMeals: number) {
 export function aggregateNutritionWeek(
   data: AppData,
   weekStart: string,
+  nutritionOf: RecipeNutritionResolver = storedNutrition,
 ): WeeklyNutrition {
   const weekEnd = addLocalDays(weekStart, 6);
   const recipeById = new Map(data.recipes.map((recipe) => [recipe.id, recipe]));
@@ -159,6 +182,7 @@ export function aggregateNutritionWeek(
         recipe,
         key,
         data.nutritionSettings.automaticEstimates,
+        nutritionOf,
       );
       if (!nutrient) continue;
       const contribution = nutrient.value * portionFactor;
@@ -196,13 +220,18 @@ export function aggregateNutritionWeek(
 }
 
 /** Aggregates exactly one local calendar day with the same trust rules. */
-export function aggregateNutritionDay(data: AppData, date: string) {
+export function aggregateNutritionDay(
+  data: AppData,
+  date: string,
+  nutritionOf: RecipeNutritionResolver = storedNutrition,
+) {
   const summary = aggregateNutritionWeek(
     {
       ...data,
       plan: data.plan.filter((day) => day.date === date),
     },
     date,
+    nutritionOf,
   );
   return { ...summary, weekEnd: date };
 }
@@ -215,15 +244,20 @@ export function suggestRecipesForWeek(
   data: AppData,
   week: WeeklyNutrition,
   limit = 3,
+  nutritionOf: RecipeNutritionResolver = storedNutrition,
 ): RecipeSuggestion[] {
   if (!data.nutritionSettings?.enabled || !Number.isInteger(limit) || limit < 1)
     return [];
   const goals = data.nutritionSettings.goals;
   if (!Array.isArray(goals) || week.mealCount === 0) return [];
+  const plannedDays = visibleMealPlan(data).filter(
+    (day) =>
+      day.date >= week.weekStart &&
+      day.date <= week.weekEnd &&
+      day.meals.length > 0,
+  );
   const plannedRecipeIds = new Set(
-    visibleMealPlan(data)
-      .filter((day) => day.date >= week.weekStart && day.date <= week.weekEnd)
-      .flatMap((day) => day.meals.map((meal) => meal.recipeId)),
+    plannedDays.flatMap((day) => day.meals.map((meal) => meal.recipeId)),
   );
 
   const suggestions: RecipeSuggestion[] = [];
@@ -231,7 +265,7 @@ export function suggestRecipesForWeek(
     if (
       !goal ||
       !goal.enabled ||
-      goal.period !== 'week' ||
+      (goal.period !== 'week' && goal.period !== 'day') ||
       !NUTRIENT_KEYS.includes(goal.nutrient)
     )
       continue;
@@ -244,7 +278,11 @@ export function suggestRecipesForWeek(
       aggregate.value === null
     )
       continue;
-    const goalMinimum = minimum as number;
+    // Daily goals are compared over the days that actually have meals.
+    const goalMinimum =
+      goal.period === 'day'
+        ? (minimum as number) * plannedDays.length
+        : (minimum as number);
     const gap = goalMinimum - aggregate.value;
     // Ignore rounding noise and marginal differences.
     if (!Number.isFinite(gap) || gap <= goalMinimum * 0.05) continue;
@@ -256,6 +294,7 @@ export function suggestRecipesForWeek(
         recipe,
         key,
         data.nutritionSettings.automaticEstimates,
+        nutritionOf,
       );
       if (!nutrient) continue;
       const contributionPerServing = nutrient.value / recipe.servings;

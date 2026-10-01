@@ -10,7 +10,7 @@ import {
 const items: ShoppingItem[] = ['A', 'B', 'C'].map((name) => ({
   id: name,
   name,
-  category: 'Sonstiges',
+  category: 'sonstiges',
   checked: name !== 'B',
   origin: { kind: 'manual' },
 }));

@@ -59,3 +59,32 @@ export function replaceRecipeFoodOverrides(
     ),
   };
 }
+
+/**
+ * Cleans editor rows for saving. Every field the editor offers survives;
+ * empty rows are dropped and missing IDs are created.
+ */
+export function normalizeEditedIngredients(
+  ingredients: readonly RecipeIngredient[],
+  createId: () => string,
+): RecipeIngredient[] {
+  return ingredients.flatMap((ingredient) => {
+    const name = ingredient.name.trim();
+    if (!name) return [];
+    const note = ingredient.note?.trim();
+    return [
+      {
+        id: ingredient.id ?? createId(),
+        amount: ingredient.amount.trim(),
+        unit: ingredient.unit.trim(),
+        name,
+        ...(ingredient.scaleWithServings !== undefined
+          ? { scaleWithServings: ingredient.scaleWithServings }
+          : {}),
+        ...(note ? { note } : {}),
+        ...(ingredient.optional ? { optional: true } : {}),
+        ...(ingredient.foodLink ? { foodLink: ingredient.foodLink } : {}),
+      },
+    ];
+  });
+}

@@ -38,7 +38,13 @@ import type {
   PlannedMeal,
   Recipe,
 } from '@/lib/model';
-import { aggregateNutritionWeek, suggestRecipesForWeek } from '@/lib/nutrition';
+import {
+  aggregateNutritionDay,
+  aggregateNutritionWeek,
+  proteinDailyGoal,
+  suggestRecipesForWeek,
+} from '@/lib/nutrition';
+import { useRecipeNutrition } from './nutrition-context';
 import { visibleRecipeTags } from '@/lib/recipe-filter';
 import { IconButton } from './icon-button';
 import {
@@ -370,21 +376,22 @@ function WeekNutrition({
   onOpenRecipe: (recipe: Recipe) => void;
   plannedMealCount: number;
 }) {
+  const nutritionOf = useRecipeNutrition();
   if (!data.nutritionSettings.enabled) {
     if (!plannedMealCount || data.nutritionSettings.promptDismissed)
       return null;
     return (
       <section className="nutrition-card nutrition-opt-in wk-card">
         <div>
-          <strong>Protein im Wochenplan einschätzen</strong>
+          <strong>Wie viel Protein steckt in deinem Plan?</strong>
           <p>
-            Optional und nur lokal: aus Gewichtsangaben schätzen oder eigene
-            Werte verwenden. Keine medizinische Bewertung.
+            Mampffred schätzt es aus deinen Zutaten – nur auf deinem Gerät. Eine
+            grobe Planungshilfe, keine medizinische Bewertung.
           </p>
         </div>
         <div className="nutrition-opt-in-actions">
           <button type="button" onClick={onNutritionSetup}>
-            Einrichten
+            Einschalten
           </button>
           <button type="button" onClick={onDismissNutrition}>
             Nicht jetzt
@@ -393,21 +400,35 @@ function WeekNutrition({
       </section>
     );
   }
-  const weeklyNutrition = aggregateNutritionWeek(data, weekStart);
+  const weeklyNutrition = aggregateNutritionWeek(data, weekStart, nutritionOf);
   const protein = weeklyNutrition.nutrients.proteinG;
-  const proteinGoal = data.nutritionSettings.goals.find(
-    (goal) =>
-      goal.enabled && goal.period === 'week' && goal.nutrient === 'proteinG',
+  const goal = proteinDailyGoal(data.nutritionSettings);
+  const days = weekDates(weekStart).map((date) => {
+    const day = aggregateNutritionDay(data, date, nutritionOf);
+    return { date, meals: day.mealCount, protein: day.nutrients.proteinG };
+  });
+  const plannedDays = days.filter((day) => day.meals > 0);
+  const completeDays = plannedDays.filter((day) => day.protein.value !== null);
+  const average = completeDays.length
+    ? completeDays.reduce((sum, day) => sum + (day.protein.value ?? 0), 0) /
+      completeDays.length
+    : undefined;
+  const scaleMax = Math.max(
+    goal ?? 0,
+    ...completeDays.map((day) => day.protein.value ?? 0),
+    1,
   );
   const suggestions =
     addLocalDays(weekStart, 6) < today
       ? []
-      : suggestRecipesForWeek(data, weeklyNutrition).flatMap((suggestion) => {
-          const recipe = data.recipes.find(
-            (item) => item.id === suggestion.recipeId,
-          );
-          return recipe ? [{ recipe, suggestion }] : [];
-        });
+      : suggestRecipesForWeek(data, weeklyNutrition, 3, nutritionOf).flatMap(
+          (suggestion) => {
+            const recipe = data.recipes.find(
+              (item) => item.id === suggestion.recipeId,
+            );
+            return recipe ? [{ recipe, suggestion }] : [];
+          },
+        );
   const missingProteinRecipes = [
     ...new Map(
       weekDates(weekStart)
@@ -417,12 +438,13 @@ function WeekNutrition({
         )
         .flatMap((meal) => {
           const recipe = data.recipes.find((item) => item.id === meal.recipeId);
-          return recipe && !recipe.nutrition?.wholeRecipe.proteinG
+          return recipe && !nutritionOf(recipe)?.wholeRecipe.proteinG
             ? [[recipe.id, recipe] as const]
             : [];
         }),
     ).values(),
   ];
+  const portions = data.nutritionSettings.defaultTrackedServings;
   return (
     <section
       className="wk-card nutrition-card"
@@ -430,10 +452,10 @@ function WeekNutrition({
     >
       <div className="nutrition-heading">
         <div>
-          <strong id="protein-plan-title">Protein im Plan</strong>
+          <strong id="protein-plan-title">Protein pro Tag</strong>
           <small>
-            {protein.coveredMeals} von {protein.totalMeals} Mahlzeiten
-            einschätzbar
+            Für dich · {portions === 1 ? '1 Portion' : `${portions} Portionen`}{' '}
+            je Mahlzeit
           </small>
         </div>
         <button type="button" onClick={onNutritionSetup}>
@@ -442,57 +464,89 @@ function WeekNutrition({
       </div>
       {protein.totalMeals === 0 ? (
         <p>Noch keine Mahlzeiten geplant.</p>
-      ) : protein.coverage < 1 || protein.value === null ? (
-        <>
-          <p>
-            Für {missingProteinRecipes.length}{' '}
-            {missingProteinRecipes.length === 1
-              ? 'geplantes Rezept fehlt'
-              : 'geplante Rezepte fehlen'}{' '}
-            noch vollständige Nährwerte. Deshalb vergleichen wir den Plan noch
-            nicht mit deinem Wochen-Planwert.
-          </p>
-          {missingProteinRecipes[0] && (
-            <button
-              type="button"
-              className="nutrition-missing-action"
-              onClick={() => onEditRecipes(missingProteinRecipes)}
-            >
-              {data.nutritionSettings.automaticEstimates
-                ? 'Zuordnungen prüfen'
-                : 'Eigene Werte ergänzen'}
-            </button>
-          )}
-        </>
       ) : (
         <>
-          <p>
-            In dieser Woche sind aus deinem Plan ca.{' '}
-            <strong>{Math.round(protein.value)} g</strong> Protein erfasst.
-          </p>
-          {proteinGoal?.minimum ? (
-            protein.value < proteinGoal.minimum ? (
+          <ol className="protein-days" aria-label="Protein je Tag">
+            {days.map((day) => {
+              const value = day.protein.value;
+              const reached =
+                goal !== undefined && value !== null && value >= goal;
+              return (
+                <li
+                  key={day.date}
+                  className={`${day.date === today ? 'is-today' : ''} ${reached ? 'is-reached' : ''}`}
+                  aria-label={`${weekdayLabel(parseLocalDate(day.date))}: ${
+                    day.meals === 0
+                      ? 'nichts geplant'
+                      : value === null
+                        ? 'noch nicht einschätzbar'
+                        : `ca. ${Math.round(value)} g`
+                  }`}
+                >
+                  <span className="protein-bar" aria-hidden="true">
+                    {goal !== undefined && (
+                      <span
+                        className="protein-goal-line"
+                        style={{ bottom: `${(goal / scaleMax) * 100}%` }}
+                      />
+                    )}
+                    <i
+                      style={{
+                        transform: `scaleY(${value === null ? 0 : Math.min(1, value / scaleMax)})`,
+                      }}
+                    />
+                  </span>
+                  <b aria-hidden="true">
+                    {day.meals === 0
+                      ? '–'
+                      : value === null
+                        ? '?'
+                        : Math.round(value)}
+                  </b>
+                  <small aria-hidden="true">
+                    {weekdayLabel(parseLocalDate(day.date)).slice(0, 2)}
+                  </small>
+                </li>
+              );
+            })}
+          </ol>
+          {average !== undefined ? (
+            <p>
+              Ø ca. <strong>{Math.round(average)} g</strong> an{' '}
+              {completeDays.length === 1
+                ? 'einem geplanten Tag'
+                : `${completeDays.length} geplanten Tagen`}
+              {goal !== undefined ? (
+                <>
+                  {' '}
+                  · dein Ziel: <strong>{Math.round(goal)} g</strong>
+                </>
+              ) : (
+                '. Lege unter „Anpassen“ ein Tagesziel fest.'
+              )}
+            </p>
+          ) : null}
+          {missingProteinRecipes.length > 0 && (
+            <>
               <p>
-                Bis zu deinem selbst gesetzten Wochen-Planwert sind noch ca.{' '}
-                <strong>
-                  {Math.round(proteinGoal.minimum - protein.value)} g
-                </strong>{' '}
-                offen.
+                {missingProteinRecipes.length === 1
+                  ? `„${missingProteinRecipes[0].name}“ ist noch nicht einschätzbar.`
+                  : `${missingProteinRecipes.length} geplante Rezepte sind noch nicht einschätzbar.`}
               </p>
-            ) : (
-              <p>
-                Aus geplanten Mahlzeiten: ca. {Math.round(protein.value)} g.
-                Dein Wochen-Planwert: {Math.round(proteinGoal.minimum)} g.
-              </p>
-            )
-          ) : (
-            <p>Du hast noch keinen eigenen Wochen-Planwert festgelegt.</p>
+              <button
+                type="button"
+                className="nutrition-missing-action"
+                onClick={() => onEditRecipes(missingProteinRecipes)}
+              >
+                Zutaten zuordnen
+              </button>
+            </>
           )}
         </>
       )}
       {suggestions.length > 0 && (
         <div className="nutrition-suggestions">
-          <strong>Rezepte, die dazu passen könnten</strong>
+          <strong>Rezepte mit passend viel Protein</strong>
           {suggestions.map(({ recipe, suggestion }) => (
             <button
               type="button"
@@ -513,8 +567,8 @@ function WeekNutrition({
         </div>
       )}
       <small className="nutrition-disclaimer">
-        Berechnung mit 1 Rezeptportion je geplanter Mahlzeit. Ungeplante
-        Speisen, Getränke und Snacks sind nicht enthalten.
+        Nur geplante Mahlzeiten. Snacks, Getränke und Ungeplantes fehlen – eine
+        grobe Planungshilfe, keine Ernährungsberatung.
       </small>
     </section>
   );

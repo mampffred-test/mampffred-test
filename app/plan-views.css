@@ -1101,6 +1101,21 @@
 .swipe-sheet {
   overscroll-behavior-y: contain;
 }
+/* The entry animation must not hold its end transform: a filled animation
+   would override the drag offset, and the sheet would not follow the finger. */
+.swipe-sheet:not(.sheet-closing) {
+  animation-fill-mode: backwards;
+}
+@media (max-width: 860px) {
+  /* Pulled above its rest position, the sheet keeps covering the bottom edge
+     instead of revealing a gap under it. */
+  .swipe-sheet.sheet-dragging,
+  .swipe-sheet.sheet-snapping {
+    box-shadow:
+      var(--shadow),
+      0 48px 0 0 var(--cream);
+  }
+}
 .swipe-sheet > .sheet-handle {
   height: 30px;
   margin-bottom: -6px;
@@ -2978,6 +2993,252 @@
   line-height: 1.45;
 }
 
+/* Einkauf v2: Zeilen mit Menge, Herkunft, Vorrat und Einkaufsmodus */
+.sh-row {
+  grid-template-columns: 52px minmax(0, 1fr);
+  padding-right: 0;
+}
+.sh-check {
+  min-height: 56px;
+  display: grid;
+  grid-template-columns: 1fr;
+  place-items: center;
+  padding: 8px 0 8px 12px;
+}
+button.sh-copy {
+  min-width: 0;
+  min-height: 56px;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 8px 14px 8px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+button.sh-copy:focus-visible {
+  outline: 3px solid rgb(63 111 37 / 28%);
+  outline-offset: -3px;
+  border-radius: 12px;
+}
+.sh-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  row-gap: 2px;
+  min-width: 0;
+}
+.sh-title strong {
+  display: inline;
+}
+.sh-qty {
+  color: var(--pv-green);
+  font-size: 0.82rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sh-row.is-done .sh-qty {
+  color: #9aa294;
+}
+.sh-copy small {
+  margin-top: 0;
+}
+.sh-flag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #eef1e4;
+  color: #5d6b52;
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 700;
+}
+.sh-flag.is-review {
+  background: #fdf0d6;
+  color: #8a5a12;
+}
+.sh-clear.is-active {
+  background: #fff;
+  color: var(--pv-green);
+}
+.sh-duplicate {
+  display: grid;
+  gap: 10px;
+  margin: 2px 0 8px;
+  padding: 12px 14px;
+  border: 1px solid #e7d9ad;
+  border-radius: 16px;
+  background: #fffaf0;
+  font-size: 0.86rem;
+}
+.sh-duplicate p {
+  margin: 0;
+  line-height: 1.4;
+}
+.sh-duplicate div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sh-duplicate button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--pv-line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--pv-ink);
+  font-weight: 700;
+}
+.sh-duplicate button.is-primary {
+  border-color: transparent;
+  background: var(--pv-button);
+  color: #fff;
+}
+.sh-pantry {
+  background: #fbfaf3;
+}
+button.sh-pantry-toggle {
+  width: 100%;
+  grid-template-columns: 44px minmax(0, 1fr) 24px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sh-pantry-chevron {
+  color: var(--muted);
+  transition: transform 0.2s var(--ease-premium);
+}
+.sh-pantry-chevron.is-open {
+  transform: rotate(180deg);
+}
+.sh-view.is-shopping-mode .sh-copy strong {
+  font-size: 1.08rem;
+}
+.sh-view.is-shopping-mode .sh-qty {
+  font-size: 0.95rem;
+}
+.sh-view.is-shopping-mode button.sh-copy,
+.sh-view.is-shopping-mode .sh-check {
+  min-height: 64px;
+}
+.sh-view.is-shopping-mode .sh-box {
+  width: 30px;
+  height: 30px;
+}
+.sh-item-origin {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--cream-2, #f4efd9);
+  font-size: 0.86rem;
+}
+.sh-item-origin p {
+  margin: 0;
+  line-height: 1.4;
+}
+.sh-item-recipes {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.sh-item-fields {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.sh-item-fields label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.sh-item-fields input,
+.sh-item-fields select {
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid var(--pv-line);
+  border-radius: 12px;
+  background: var(--card);
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 500;
+}
+.sh-item-pantry {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 0.86rem;
+}
+.sh-item-pantry small {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.4;
+}
+.segmented {
+  display: grid;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 14px;
+  background: #eef1e4;
+}
+.segmented button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #4c5a43;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.segmented button[aria-pressed='true'] {
+  background: #fff;
+  color: var(--pv-green);
+  box-shadow: 0 2px 8px rgb(39 55 27 / 10%);
+}
+.sh-item-sheet .danger-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--danger);
+}
+.ws-range {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 2px 0 10px;
+}
+.ws-range label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.ws-range select {
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.92rem;
+}
+
 @media (max-width: 370px) {
   .sh-view {
     padding-inline: 12px;
@@ -3020,4 +3281,140 @@
   .app-frame[inert] .sh-empty img {
     animation-play-state: paused;
   }
+}
+
+/* ---------- Heute: Protein ---------- */
+.td-protein {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--pv-line);
+  border-radius: var(--pv-radius);
+  background: var(--card);
+  box-shadow: 0 4px 14px rgb(39 55 27 / 5%);
+}
+.td-protein-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #e8f0dc;
+  color: var(--pv-green);
+}
+.td-protein strong {
+  display: block;
+  color: var(--pv-ink);
+  font-size: 0.95rem;
+}
+.td-protein small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+.td-protein-bar {
+  display: block;
+  height: 6px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #ece8d8;
+}
+.td-protein-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 6px;
+  background: var(--pv-green-light);
+  transform-origin: left center;
+}
+.rx-protein {
+  color: var(--pv-green);
+  font-weight: 750;
+}
+
+/* ---------- Woche füllen: Reste verwerten ---------- */
+.qp-leftovers {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: #fdf6e3;
+  color: #6b5a2b;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+.qp-uses {
+  display: block;
+  margin-top: 2px;
+  color: var(--pv-green);
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 700;
+}
+
+/* ---------- Einkauf: Reste und Ladenreihenfolge ---------- */
+.sh-leftovers {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px dashed #d9c98f;
+  border-radius: 18px;
+  background: #fffaf0;
+}
+.sh-leftovers strong {
+  color: var(--pv-ink);
+  font-size: 0.92rem;
+}
+.sh-leftovers p {
+  margin: 0;
+  color: #6b5a2b;
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+.sh-leftovers small {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+.sh-order-button {
+  justify-self: center;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  border: 1px solid var(--pv-line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--pv-green);
+  font-weight: 750;
+}
+.sh-order-list {
+  display: grid;
+  gap: 6px;
+  max-height: 52dvh;
+  margin: 4px 0 12px;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.sh-order-list li {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 40px 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 6px 8px;
+  border: 1px solid var(--pv-line);
+  border-radius: 14px;
+  background: var(--card);
+}
+.sh-order-list .mo-icon {
+  width: 36px;
+  height: 36px;
+}
+.sh-order-list strong {
+  font-size: 0.9rem;
 }

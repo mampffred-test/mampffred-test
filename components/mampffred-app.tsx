@@ -22,14 +22,20 @@ import {
   assetUrl,
 } from './recipe-image';
 import { TodayView } from './today-view';
-import {
-  MealSlotIcon,
-  TagIcon,
-  isoWeekNumber,
-  portions,
-  weekLabel,
-} from './plan-ui';
+import { MealSlotIcon, TagIcon, portions } from './plan-ui';
 import { WeekView } from './week-view';
+import { ShoppingView } from './shopping-view';
+import { PantrySettings } from './pantry-settings';
+import { RecipeTextImportSheet } from './recipe-text-import-sheet';
+import {
+  parseRecipeText,
+  type ParsedRecipeText,
+} from '@/lib/recipe-text-import';
+import {
+  RecipeNutritionContext,
+  useRecipeNutrition,
+  type RecipeNutritionResolver,
+} from './nutrition-context';
 import { QuickPlanSheet } from './quick-plan-sheet';
 import {
   applyPlanChanges,
@@ -60,6 +66,7 @@ import {
   installStandardRecipes,
   newStandardImageKeys,
   restoreStandardRecipes,
+  standardRecipeCount,
 } from '@/lib/standard-recipes';
 
 /* oxlint-disable next/no-img-element, jsx-a11y/prefer-tag-over-role, react/immutability, react/refs, react/set-state-in-effect */
@@ -72,21 +79,21 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ClipboardPaste,
   Clock3,
   CloudOff,
-  Container,
   CookingPot,
-  Croissant,
   Download,
+  Dumbbell,
   EllipsisVertical,
   Heart,
+  House,
   Home,
   ImagePlus,
   Info,
   Leaf,
   LoaderCircle,
   LockKeyhole,
-  Milk,
   Minus,
   Pencil,
   Plus,
@@ -95,10 +102,11 @@ import {
   Save,
   Settings,
   Share2,
+  ShieldAlert,
   ShieldCheck,
   ShoppingCart,
-  ShoppingBasket,
   Sparkles,
+  Target,
   Trash2,
   Upload,
   Users,
@@ -127,6 +135,7 @@ import type {
   FoodOverride,
   MealSlot,
   NutritionSettings,
+  PantryState,
   PlannedMeal,
   Recipe,
   RecipeDraft,
@@ -140,6 +149,8 @@ import {
   ingredientOverrideKey,
   mergeCalculatedNutrition,
   preferredUnitForFood,
+  isHighProtein,
+  recipeNutritionEstimate,
   searchFoodReferences,
   type FoodReference,
   type RecipeIngredientCalculation,
@@ -170,6 +181,7 @@ import {
   hasMeaningfulRecipeDraft,
   removeRecipeDraft,
   replaceRecipeFoodOverrides,
+  normalizeEditedIngredients,
   upsertRecipeDraft,
 } from '@/lib/recipe-drafts';
 import {
@@ -203,14 +215,32 @@ import {
 } from '@/lib/storage';
 import {
   reconcileWeekShopping,
+  storedShoppingRange,
+  type WeekShoppingOptions,
   type WeekShoppingResult,
 } from '@/lib/week-shopping';
+import { groupShoppingItems, recipeShoppingItems } from '@/lib/shopping-list';
+import {
+  aisleLabel,
+  CATALOG_SOURCE,
+  catalogFoodById,
+  catalogFoodReferences,
+  catalogFoods,
+  catalogReferenceId,
+  foldFoodName,
+  matchCatalogFood,
+  matchCatalogFoods,
+  searchCatalogFoods,
+} from '@/lib/food-catalog';
+import { parseIngredientLine } from '@/lib/ingredient-text';
+import { formatQuantity } from '@/lib/quantity';
 
 type Tab = AppTab;
 type SettingsPanel =
   | 'planning'
   | 'backup'
   | 'nutrition'
+  | 'pantry'
   | 'foods'
   | 'privacy'
   | 'app';
@@ -258,15 +288,31 @@ async function calculateWithBundledFoodData(
   recipe: Recipe,
   overrides: Record<string, FoodOverride>,
   customFoods: readonly CustomFood[] = [],
+  foodAliases: Record<string, string> = {},
 ) {
-  const catalogModule = await import('@/lib/bls-catalog');
-  const { blsCatalog } = catalogModule;
-  if (!catalogModule.BLS_MANIFEST.sourceSha256)
-    throw new Error('INVALID_BLS_CATALOG');
+  // The catalog covers everyday foods; the 585 KB BLS is only loaded when a
+  // recipe or correction still points into it.
+  const usesBls =
+    recipe.ingredients.some(
+      (ingredient) => ingredient.foodLink?.kind === 'bls',
+    ) ||
+    Object.values(overrides).some(
+      (override) =>
+        override.kind === 'food' && override.foodId.startsWith('bls'),
+    ) ||
+    Object.values(foodAliases).some((id) => id.startsWith('bls'));
+  const blsCatalog = usesBls
+    ? (await import('@/lib/bls-catalog')).blsCatalog
+    : [];
   const calculation = calculateRecipeFromIngredients(
     recipe,
-    [...customFoods.map(customFoodToReference), ...blsCatalog],
+    [
+      ...customFoods.map(customFoodToReference),
+      ...catalogFoodReferences(),
+      ...blsCatalog,
+    ],
     overrides,
+    { foodAliases },
   );
   return {
     calculation,
@@ -348,7 +394,8 @@ function DayDetailSheet({
   const dialogRef = useModalFocus<HTMLElement>(sheetExit.close);
   const sheetSwipe = useSheetSwipeToClose(onClose);
   const plannedDay = visiblePlan.find((day) => day.date === date);
-  const nutrition = aggregateNutritionDay(data, date);
+  const nutritionOf = useRecipeNutrition();
+  const nutrition = aggregateNutritionDay(data, date, nutritionOf);
   const nutrients = [
     ['energyKcal', 'Energie', 'kcal'],
     ['proteinG', 'Protein', 'g'],
@@ -528,6 +575,7 @@ function RecipesView({
   onFilter,
   onRecipe,
   onDraft,
+  onPasteText,
   onDiscardDraft,
   onAdd,
   onAddSamples,
@@ -542,6 +590,7 @@ function RecipesView({
   onFilter: (filter: RecipeFilter) => void;
   onRecipe: (recipe: Recipe) => void;
   onDraft: (draft: RecipeDraft) => void;
+  onPasteText: () => void;
   onDiscardDraft: (draftId: string) => Promise<void>;
   onAdd: () => void;
   onAddSamples: () => void;
@@ -550,29 +599,60 @@ function RecipesView({
 }) {
   const [discardTarget, setDiscardTarget] = useState<RecipeDraft>();
   const importFileRef = useRef<HTMLInputElement>(null);
+  const nutritionOf = useRecipeNutrition();
+  const showProtein =
+    data.nutritionSettings.enabled && data.nutritionSettings.automaticEstimates;
+  const proteinPerServing = useCallback(
+    (recipe: Recipe) => {
+      const whole = nutritionOf(recipe)?.wholeRecipe;
+      const protein = whole?.proteinG?.value;
+      if (protein === undefined || recipe.servings <= 0) return undefined;
+      return {
+        proteinG: protein / recipe.servings,
+        energyKcal:
+          whole?.energyKcal !== undefined
+            ? whole.energyKcal.value / recipe.servings
+            : undefined,
+      };
+    },
+    [nutritionOf],
+  );
+  const filterOptions = useMemo(
+    () => ({
+      isHighProtein: (recipe: Recipe) => {
+        const perServing = proteinPerServing(recipe);
+        return perServing ? isHighProtein(perServing) : false;
+      },
+    }),
+    [proteinPerServing],
+  );
   const filters: RecipeFilter[] = [
     'Alle',
     'Favoriten',
+    ...(showProtein ? (['Proteinreich'] as const) : []),
     'Schnell',
     'Vegetarisch',
     'Vegan',
     'Gesund',
   ];
   const deferredQuery = useDeferredValue(query);
+  const activeFilter =
+    filter === 'Proteinreich' && !showProtein ? 'Alle' : filter;
   const recipes = useMemo(
-    () => filterRecipes(data.recipes, deferredQuery, filter),
-    [data.recipes, deferredQuery, filter],
+    () =>
+      filterRecipes(data.recipes, deferredQuery, activeFilter, filterOptions),
+    [activeFilter, data.recipes, deferredQuery, filterOptions],
   );
   const filterCounts = useMemo(
     () =>
       Object.fromEntries(
         filters.map((item) => [
           item,
-          filterRecipes(data.recipes, '', item).length,
+          filterRecipes(data.recipes, '', item, filterOptions).length,
         ]),
       ) as Record<RecipeFilter, number>,
     // oxlint-disable-next-line react/exhaustive-deps
-    [data.recipes],
+    [data.recipes, filterOptions, showProtein],
   );
   // Stable for the whole day, so the banner does not change while browsing.
   const today = todayLocal();
@@ -662,8 +742,8 @@ function RecipesView({
           {filters.map((item) => (
             <button
               key={item}
-              className={filter === item ? 'active' : ''}
-              aria-pressed={filter === item}
+              className={activeFilter === item ? 'active' : ''}
+              aria-pressed={activeFilter === item}
               onClick={(event) => {
                 onFilter(item);
                 event.currentTarget.scrollIntoView({
@@ -678,6 +758,7 @@ function RecipesView({
               }}
             >
               {item === 'Favoriten' && <Heart size={16} />}
+              {item === 'Proteinreich' && <Dumbbell size={16} />}
               {(item === 'Schnell' || item === 'Gesund') && (
                 <Sparkles size={16} />
               )}
@@ -766,11 +847,21 @@ function RecipesView({
                     <span>
                       <Clock3 size={13} /> {recipe.minutes} Min.
                     </span>
-                    {visibleRecipeTags(recipe)[0] && (
-                      <span className="rx-tag">
-                        <TagIcon tag={visibleRecipeTags(recipe)[0]} size={12} />{' '}
-                        {visibleRecipeTags(recipe)[0]}
+                    {showProtein && proteinPerServing(recipe) ? (
+                      <span className="rx-tag rx-protein">
+                        <Dumbbell size={12} />{' '}
+                        {Math.round(proteinPerServing(recipe)?.proteinG ?? 0)} g
                       </span>
+                    ) : (
+                      visibleRecipeTags(recipe)[0] && (
+                        <span className="rx-tag">
+                          <TagIcon
+                            tag={visibleRecipeTags(recipe)[0]}
+                            size={12}
+                          />{' '}
+                          {visibleRecipeTags(recipe)[0]}
+                        </span>
+                      )
                     )}
                   </small>
                 </button>
@@ -846,6 +937,16 @@ function RecipesView({
               </span>
               <ChevronRight size={18} aria-hidden="true" />
             </button>
+            <button type="button" onClick={onPasteText}>
+              <span className="rx-more-icon" aria-hidden="true">
+                <ClipboardPaste size={19} />
+              </span>
+              <span>
+                <strong>Rezept aus Text einfügen</strong>
+                <small>Aus WhatsApp, Notiz oder Webseite kopiert</small>
+              </span>
+              <ChevronRight size={18} aria-hidden="true" />
+            </button>
             <button
               type="button"
               onClick={() => importFileRef.current?.click()}
@@ -910,323 +1011,6 @@ function RecipesView({
   );
 }
 
-const shoppingCategories: Array<{
-  category: ShoppingItem['category'];
-  icon: React.ReactNode;
-  tone: 'green' | 'slate' | 'amber' | 'clay' | 'sage';
-  art?: string;
-}> = [
-  {
-    category: 'Gemüse & Obst',
-    icon: <Carrot size={20} />,
-    tone: 'green',
-    art: 'assets/shopping-produce-v1.webp',
-  },
-  {
-    category: 'Kühlregal',
-    icon: <Milk size={20} />,
-    tone: 'slate',
-    art: 'assets/shopping-dairy-v1.webp',
-  },
-  {
-    category: 'Vorrat',
-    icon: <Container size={20} />,
-    tone: 'amber',
-    art: 'assets/shopping-pantry-v1.webp',
-  },
-  {
-    category: 'Backwaren',
-    icon: <Croissant size={20} />,
-    tone: 'clay',
-    art: 'assets/shopping-bakery-v1.webp',
-  },
-  { category: 'Sonstiges', icon: <ShoppingBasket size={20} />, tone: 'sage' },
-];
-
-function ShoppingView({
-  data,
-  now,
-  weekStart,
-  onWeekStart,
-  onChange,
-  onRemove,
-  onFromWeek,
-}: {
-  data: AppData;
-  now: Date;
-  weekStart: string;
-  onWeekStart: (weekStart: string) => void;
-  onChange: (items: ShoppingItem[]) => void;
-  onRemove: (items: ShoppingItem[]) => void;
-  onFromWeek: () => void;
-}) {
-  const [newItem, setNewItem] = useState('');
-  const currentWeek = startOfLocalWeek(now);
-  const visibleShopping = data.shopping.filter(
-    (item) =>
-      item.origin.kind !== 'week' || item.origin.weekStart === weekStart,
-  );
-  const weekItems = visibleShopping.filter(
-    (item) => item.origin.kind === 'week',
-  );
-  const completed = visibleShopping.filter((item) => item.checked).length;
-  const total = visibleShopping.length;
-  const circumference = 2 * Math.PI * 22;
-  function addItem() {
-    const name = newItem.trim();
-    if (!name || data.shopping.length >= 10_000) return;
-    onChange([
-      ...data.shopping,
-      {
-        id: crypto.randomUUID(),
-        name,
-        category: 'Sonstiges',
-        checked: false,
-        origin: { kind: 'manual' },
-      },
-    ]);
-    setNewItem('');
-  }
-  function toggle(item: ShoppingItem) {
-    onChange(
-      data.shopping.map((entry) =>
-        entry.id === item.id ? { ...entry, checked: !entry.checked } : entry,
-      ),
-    );
-  }
-  return (
-    <div className="screen-content shopping-view sh-view">
-      <header className="td-header">
-        <div>
-          <h1>Einkauf</h1>
-          <p>
-            {shortDate.format(fromIso(weekStart))} –{' '}
-            {shortDate.format(fromIso(addLocalDays(weekStart, 6)))} · KW{' '}
-            {isoWeekNumber(fromIso(weekStart))}
-          </p>
-        </div>
-      </header>
-      <nav className="wk-nav" aria-label="Einkaufswoche wechseln">
-        <IconButton
-          label="Vorherige Woche"
-          onClick={() => onWeekStart(addLocalDays(weekStart, -7))}
-        >
-          <ChevronLeft size={21} />
-        </IconButton>
-        <button
-          type="button"
-          className="wk-nav-label"
-          onClick={() => onWeekStart(currentWeek)}
-          disabled={weekStart === currentWeek}
-          aria-label={
-            weekStart === currentWeek
-              ? 'Aktuelle Woche wird angezeigt'
-              : 'Zur aktuellen Woche wechseln'
-          }
-        >
-          {weekLabel(weekStart, currentWeek)}
-          {weekStart !== currentWeek && <small>Zurück zu heute</small>}
-        </button>
-        <IconButton
-          label="Nächste Woche"
-          onClick={() => onWeekStart(addLocalDays(weekStart, 7))}
-        >
-          <ChevronRight size={21} />
-        </IconButton>
-      </nav>
-
-      <div className="wk-hero-wrap">
-        <span className="wk-hero-leaves" aria-hidden="true">
-          <img src={assetUrl('assets/basil-card-leaves.png')} alt="" />
-        </span>
-        <section className="wk-hero sh-hero" aria-label="Einkaufsfortschritt">
-          <span className="wk-hero-glow" aria-hidden="true" />
-          <div className="wk-hero-top">
-            <span
-              className="wk-ring"
-              role="progressbar"
-              aria-label="Einkauf erledigt"
-              aria-valuemin={0}
-              aria-valuemax={total}
-              aria-valuenow={completed}
-            >
-              <svg viewBox="0 0 56 56" aria-hidden="true">
-                <circle className="wk-ring-track" cx="28" cy="28" r="22" />
-                <circle
-                  className="wk-ring-value"
-                  cx="28"
-                  cy="28"
-                  r="22"
-                  strokeDasharray={circumference}
-                  strokeDashoffset={
-                    circumference * (1 - (total ? completed / total : 0))
-                  }
-                />
-              </svg>
-              <strong>{completed}</strong>
-            </span>
-            <div className="wk-progress-copy">
-              <strong>
-                {total === 0
-                  ? 'Bereit für deine Liste'
-                  : completed === total
-                    ? 'Alles im Korb!'
-                    : `${completed} von ${total} erledigt`}
-              </strong>
-              <small>
-                {total === 0
-                  ? 'Starte mit deinem Wochenplan oder eigenen Artikeln.'
-                  : completed === total
-                    ? 'Guten Appetit und bis zum nächsten Einkauf.'
-                    : `Noch ${total - completed} Artikel offen.`}
-              </small>
-            </div>
-          </div>
-          <div className="sh-hero-actions">
-            <button type="button" className="wk-fill" onClick={onFromWeek}>
-              <CalendarDays size={16} aria-hidden="true" />
-              {weekItems.length
-                ? 'Mit Wochenplan abgleichen'
-                : 'Aus Wochenplan'}
-            </button>
-            {completed > 0 && (
-              <button
-                type="button"
-                className="sh-clear"
-                onClick={() =>
-                  onRemove(visibleShopping.filter((item) => item.checked))
-                }
-              >
-                <Trash2 size={15} aria-hidden="true" /> Erledigte ({completed})
-              </button>
-            )}
-          </div>
-        </section>
-      </div>
-
-      <form
-        className="sh-add"
-        onSubmit={(event) => {
-          event.preventDefault();
-          addItem();
-        }}
-      >
-        <input
-          aria-label="Einkaufsartikel hinzufügen"
-          value={newItem}
-          maxLength={500}
-          onChange={(event) => setNewItem(event.target.value)}
-          placeholder="Artikel hinzufügen, z. B. Milch"
-          enterKeyHint="done"
-        />
-        <button
-          type="submit"
-          aria-label="Artikel hinzufügen"
-          disabled={!newItem.trim()}
-        >
-          <Plus size={22} />
-        </button>
-      </form>
-
-      {total === 0 ? (
-        <section className="sh-empty">
-          <img
-            src={assetUrl('assets/mampffred-mascot-small.png')}
-            alt=""
-            width={96}
-            height={105}
-            decoding="async"
-          />
-          <h2>Deine Liste ist noch leer</h2>
-          <p>
-            Tippe oben auf „Aus Wochenplan“, dann stellt Mampffred die Zutaten
-            deiner geplanten Rezepte zusammen.
-          </p>
-        </section>
-      ) : (
-        <div className="sh-groups">
-          {shoppingCategories.map(({ category, icon, tone, art }) => {
-            // Open items first, so the list shrinks while you shop.
-            const items = visibleShopping
-              .filter((item) => item.category === category)
-              .toSorted(
-                (left, right) => Number(left.checked) - Number(right.checked),
-              );
-            if (!items.length) return null;
-            const done = items.filter((item) => item.checked).length;
-            return (
-              <section
-                className={`sh-group ${done === items.length ? 'is-done' : ''}`}
-                key={category}
-                aria-label={category}
-              >
-                <header className="sh-group-head">
-                  <span className={`mo-icon is-${tone}`} aria-hidden="true">
-                    {icon}
-                  </span>
-                  <span>
-                    <strong>{category}</strong>
-                    <small>
-                      {done} von {items.length} erledigt
-                    </small>
-                  </span>
-                  {art && (
-                    <img
-                      className="sh-group-art"
-                      src={assetUrl(art)}
-                      alt=""
-                      aria-hidden="true"
-                      decoding="async"
-                    />
-                  )}
-                </header>
-                <span className="sh-group-bar" aria-hidden="true">
-                  <i
-                    style={{
-                      transform: `scaleX(${done / items.length})`,
-                    }}
-                  />
-                </span>
-                <ul className="sh-list">
-                  {items.map((item) => (
-                    <li
-                      className={`sh-row ${item.checked ? 'is-done' : ''}`}
-                      key={item.id}
-                    >
-                      <label className="sh-check">
-                        <input
-                          type="checkbox"
-                          aria-label={`${item.name} als ${item.checked ? 'unerledigt' : 'erledigt'} markieren`}
-                          checked={item.checked}
-                          onChange={() => toggle(item)}
-                        />
-                        <span className="sh-box" aria-hidden="true">
-                          <Check size={15} strokeWidth={3} />
-                        </span>
-                        <span className="sh-copy">
-                          <strong>{item.name}</strong>
-                          {item.source && <small>{item.source}</small>}
-                        </span>
-                      </label>
-                      <IconButton
-                        className="sh-remove"
-                        label={`${item.name} entfernen`}
-                        onClick={() => onRemove([item])}
-                      >
-                        <Trash2 size={16} />
-                      </IconButton>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function MoreView({
   data,
   now,
@@ -1273,6 +1057,13 @@ function MoreView({
             : 'Optional einrichten',
           icon: <Info size={20} />,
           tone: 'amber',
+        },
+        {
+          panel: 'pantry',
+          label: 'Vorratsschrank',
+          detail: `${Object.keys(data.pantry).length} ${Object.keys(data.pantry).length === 1 ? 'Grundzutat' : 'Grundzutaten'} zu Hause`,
+          icon: <House size={20} />,
+          tone: 'green',
         },
         {
           panel: 'foods',
@@ -1465,6 +1256,7 @@ function RecipeDetail({
   useEffect(() => setServings(recipe.servings), [recipe.id, recipe.servings]);
   const dialogRef = useModalFocus<HTMLDivElement>(onClose);
   const factor = servings / recipe.servings;
+  const nutrition = useRecipeNutrition()(recipe);
   const nutritionMetrics = [
     ['energyKcal', 'kcal', 'Energie'],
     ['proteinG', 'g', 'Eiweiß'],
@@ -1472,7 +1264,7 @@ function RecipeDetail({
     ['carbohydratesG', 'g', 'Kohlenhydrate'],
   ] as const;
   const visibleNutrition = nutritionMetrics.flatMap(([key, unit, label]) => {
-    const metric = recipe.nutrition?.wholeRecipe[key];
+    const metric = nutrition?.wholeRecipe[key];
     if (!metric || (metric.source.kind === 'dataset' && !automaticEstimates))
       return [];
     return [
@@ -1548,20 +1340,15 @@ function RecipeDetail({
                 <Leaf size={16} /> {tag}
               </span>
             ))}
-            {recipe.nutrition?.wholeRecipe.proteinG &&
-              (recipe.nutrition.wholeRecipe.proteinG.source.kind !==
-                'dataset' ||
+            {nutrition?.wholeRecipe.proteinG &&
+              (nutrition.wholeRecipe.proteinG.source.kind !== 'dataset' ||
                 automaticEstimates) && (
-                <span>
-                  <Info size={16} /> ca.{' '}
+                <span className="recipe-protein-chip">
+                  <Dumbbell size={16} /> ca.{' '}
                   {Math.round(
-                    recipe.nutrition.wholeRecipe.proteinG.value /
-                      recipe.servings,
+                    nutrition.wholeRecipe.proteinG.value / recipe.servings,
                   )}{' '}
-                  g Protein / Portion ·{' '}
-                  {recipe.nutrition.wholeRecipe.proteinG.source.kind === 'user'
-                    ? 'eigene Angabe'
-                    : 'aus Zutaten geschätzt'}
+                  g Protein / Portion
                 </span>
               )}
           </div>
@@ -1602,6 +1389,14 @@ function RecipeDetail({
                   <span>{ingredient.unit}</span>
                   <p>
                     {ingredient.name}
+                    {ingredient.note && (
+                      <small className="ingredient-note-text">
+                        , {ingredient.note}
+                      </small>
+                    )}
+                    {ingredient.optional && (
+                      <small className="ingredient-optional"> optional</small>
+                    )}
                     {ingredient.scaleWithServings === false && (
                       <small> · Menge bleibt gleich</small>
                     )}
@@ -1682,11 +1477,12 @@ function FoodMappingSheet({
   ingredientUnit: string;
   mode: 'mapping' | 'amount';
   currentOverride?: FoodOverride;
-  onApply: (override: FoodOverride | undefined) => void;
+  onApply: (override: FoodOverride | undefined, remember: boolean) => void;
   onClose: () => void;
 }) {
   const sheetExit = useAnimatedSheetClose(onClose);
   const [query, setQuery] = useState(ingredientName);
+  const [remember, setRemember] = useState(true);
   const [candidates, setCandidates] = useState<readonly FoodReference[]>([]);
   const [searchState, setSearchState] = useState<'loading' | 'ready' | 'error'>(
     'loading',
@@ -1711,11 +1507,25 @@ function FoodMappingSheet({
   useEffect(() => {
     let cancelled = false;
     setSearchState('loading');
+    const everyday = searchCatalogFoods(query, 6).flatMap((food) => {
+      const reference = catalogFoodReferences().find(
+        (entry) => entry.id === catalogReferenceId(food),
+      );
+      return reference ? [reference] : [];
+    });
+    if (everyday.length >= 3 || !query.trim()) {
+      setCandidates(everyday);
+      setSearchState('ready');
+      return;
+    }
     const timer = window.setTimeout(() => {
       void import('@/lib/bls-catalog')
         .then(({ blsCatalog }) => {
           if (cancelled) return;
-          setCandidates(searchFoodReferences(query, blsCatalog, 8));
+          setCandidates([
+            ...everyday,
+            ...searchFoodReferences(query, blsCatalog, 8 - everyday.length),
+          ]);
           setSearchState('ready');
         })
         .catch(() => {
@@ -1757,10 +1567,16 @@ function FoodMappingSheet({
             dieser Zutat für das ganze Rezept eintragen.
           </p>
         )}
-        <small className="mapping-scope-note">
-          Deine Auswahl bleibt lokal und gilt nur für diese Zutat in diesem
-          Rezept.
-        </small>
+        {mode === 'mapping' && (
+          <label className="mapping-remember">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(event) => setRemember(event.target.checked)}
+            />
+            „{ingredientName}“ in allen Rezepten so erkennen
+          </label>
+        )}
         {mode === 'mapping' && (
           <label>
             Passendes Lebensmittel suchen
@@ -1791,9 +1607,15 @@ function FoodMappingSheet({
                   currentOverride?.kind === 'food' &&
                   currentOverride.foodId === food.id
                 }
-                onClick={() => onApply({ kind: 'food', foodId: food.id })}
+                onClick={() =>
+                  onApply({ kind: 'food', foodId: food.id }, remember)
+                }
               >
-                <strong>{foodDisplayName(food)}</strong>
+                <strong>
+                  {food.id.startsWith('mf:')
+                    ? food.name
+                    : foodDisplayName(food)}
+                </strong>
                 <small>
                   {food.nutrientsPer100g.proteinG !== undefined
                     ? `${food.nutrientsPer100g.proteinG} g Protein/100 g`
@@ -1834,10 +1656,13 @@ function FoodMappingSheet({
             type="button"
             disabled={!customProteinValid}
             onClick={() =>
-              onApply({
-                kind: 'whole-ingredient',
-                nutrients: { proteinG: parsedProtein },
-              })
+              onApply(
+                {
+                  kind: 'whole-ingredient',
+                  nutrients: { proteinG: parsedProtein },
+                },
+                false,
+              )
             }
           >
             Eigenen Wert verwenden
@@ -1846,7 +1671,7 @@ function FoodMappingSheet({
         <button
           type="button"
           className="secondary-button"
-          onClick={() => onApply({ kind: 'ignored' })}
+          onClick={() => onApply({ kind: 'ignored' }, false)}
         >
           In diesem Rezept auslassen
         </button>
@@ -1854,13 +1679,47 @@ function FoodMappingSheet({
           <button
             type="button"
             className="secondary-button"
-            onClick={() => onApply(undefined)}
+            onClick={() => onApply(undefined, false)}
           >
             Eigene Korrektur entfernen
           </button>
         )}
       </section>
     </div>
+  );
+}
+
+/** Tells the cook, without jargon, whether Mampffred understood a name. */
+function IngredientRecognition({
+  ingredient,
+  customFoods,
+}: {
+  ingredient: RecipeIngredient;
+  customFoods: readonly CustomFood[];
+}) {
+  const name = ingredient.name.trim();
+  if (!name) return null;
+  const link = ingredient.foodLink;
+  const label =
+    link?.kind === 'catalog'
+      ? catalogFoodById(link.foodId)?.name
+      : link?.kind === 'custom'
+        ? customFoods.find((food) => `custom:${food.id}` === link.foodId)?.name
+        : link?.kind === 'bls'
+          ? 'Nährwertdatenbank'
+          : matchCatalogFoods(name)
+              .map((food) => food.name)
+              .join(', ') || undefined;
+  return (
+    <small className={`ingredient-recognition ${label ? 'is-known' : ''}`}>
+      {label ? (
+        <>
+          <Check size={12} aria-hidden="true" /> Erkannt: {label}
+        </>
+      ) : (
+        'Nicht erkannt – fehlt in Nährwerten, Einkauf nach Namen'
+      )}
+    </small>
   );
 }
 
@@ -1871,6 +1730,7 @@ function IngredientCombobox({
   onChange,
   onSelected,
   onCreateCustom,
+  onPasteLines,
   registerInput,
   error,
 }: {
@@ -1881,6 +1741,8 @@ function IngredientCombobox({
   onChange: (ingredient: RecipeIngredient) => void;
   onSelected: () => void;
   onCreateCustom: (name: string) => void;
+  /** A pasted ingredient list ("200 g Feta" …) instead of a single name. */
+  onPasteLines: (lines: string[]) => void;
   registerInput: (node: HTMLInputElement | null) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -1903,14 +1765,24 @@ function IngredientCombobox({
     () => customFoods.map(customFoodToReference),
     [customFoods],
   );
-  const combinedCatalog = useMemo(
-    () => [...customCatalog, ...systemCatalog],
-    [customCatalog, systemCatalog],
-  );
   const query = ingredient.name.trim();
+  const catalogResults = useMemo(
+    () => (query ? searchCatalogFoods(query, 6) : []),
+    [query],
+  );
+  const customResults = useMemo(
+    () =>
+      query
+        ? searchFoodReferences(query, customCatalog, 4)
+        : customCatalog.slice(0, 6),
+    [customCatalog, query],
+  );
+  // The full nutrient database is only a fallback for unusual foods.
+  const needsSystemCatalog =
+    query.length >= 3 && catalogResults.length + customResults.length < 3;
 
   useEffect(() => {
-    if (!open || systemCatalog.length) return;
+    if (!open || !needsSystemCatalog || systemCatalog.length) return;
     let cancelled = false;
     setLoading(true);
     void import('@/lib/bls-catalog')
@@ -1923,12 +1795,22 @@ function IngredientCombobox({
     return () => {
       cancelled = true;
     };
-  }, [open, systemCatalog.length]);
+  }, [needsSystemCatalog, open, systemCatalog.length]);
 
-  const results = useMemo(() => {
-    if (!query) return customCatalog.slice(0, 6);
-    return searchFoodReferences(query, combinedCatalog, 8);
-  }, [combinedCatalog, customCatalog, query]);
+  const results = useMemo((): FoodReference[] => {
+    const catalogRefs = catalogResults.map((food): FoodReference => ({
+      id: catalogReferenceId(food),
+      name: food.plural ?? food.name,
+      aliases: [],
+      source: { dataset: 'Mampffred', version: '1' },
+      nutrientsPer100g: {},
+    }));
+    const system =
+      needsSystemCatalog && systemCatalog.length
+        ? searchFoodReferences(query, systemCatalog, 4)
+        : [];
+    return [...catalogRefs, ...customResults, ...system].slice(0, 10);
+  }, [catalogResults, customResults, needsSystemCatalog, query, systemCatalog]);
   const actions = query ? 2 : 0;
   const optionCount = results.length + actions;
   const resultsSignature = results.map((food) => food.id).join('\0');
@@ -1967,6 +1849,27 @@ function IngredientCombobox({
   }, [activeIndex, open, stableId]);
 
   const chooseFood = (food: FoodReference) => {
+    const catalogFood = catalogFoodById(food.id);
+    if (food.id.startsWith('mf:') && catalogFood) {
+      // Keep the person's own wording when it already names this food.
+      const typedMatches = matchCatalogFood(query)?.id === catalogFood.id;
+      onChange({
+        ...ingredient,
+        name: typedMatches ? query : (catalogFood.plural ?? catalogFood.name),
+        foodLink: { kind: 'catalog', foodId: food.id },
+        unit:
+          ingredient.unit ||
+          (catalogFood.sell === 'piece'
+            ? 'Stück'
+            : catalogFood.density && catalogFood.aisle !== 'kuehlregal'
+              ? 'ml'
+              : 'g'),
+      });
+      setOpen(false);
+      setActiveIndex(-1);
+      window.requestAnimationFrame(onSelected);
+      return;
+    }
     const isCustom = food.source.dataset === 'Eigene Lebensmittel';
     onChange({
       ...ingredient,
@@ -2035,6 +1938,21 @@ function IngredientCombobox({
             setOpen(true);
             setActiveIndex(-1);
           }}
+          onPaste={(event) => {
+            const text = event.clipboardData.getData('text');
+            const lines = text
+              .split(/\r?\n/)
+              .map((line) => line.trim())
+              .filter(Boolean);
+            const looksLikeAmount = /^[-–•*·]?\s*(?:\d|[½⅓⅔¼¾])/.test(
+              lines[0] ?? '',
+            );
+            if (lines.length > 1 || (lines.length === 1 && looksLikeAmount)) {
+              event.preventDefault();
+              setOpen(false);
+              onPasteLines(lines);
+            }
+          }}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing) return;
             if (event.key === 'ArrowDown') {
@@ -2096,7 +2014,7 @@ function IngredientCombobox({
           role="listbox"
           aria-label={`Vorschläge für Zutat ${index + 1}`}
         >
-          {loading && !systemCatalog.length && (
+          {loading && needsSystemCatalog && !systemCatalog.length && (
             <div
               className="ingredient-option-status"
               role="option"
@@ -2117,8 +2035,13 @@ function IngredientCombobox({
             </div>
           )}
           {results.map((food, resultIndex) => {
-            const displayName = foodDisplayName(food);
-            const detail = food.name !== displayName ? food.name : undefined;
+            const everyday = food.id.startsWith('mf:');
+            const displayName = everyday ? food.name : foodDisplayName(food);
+            const detail = everyday
+              ? aisleLabel(catalogFoodById(food.id)?.aisle ?? 'sonstiges')
+              : food.name !== displayName
+                ? food.name
+                : undefined;
             const custom = food.source.dataset === 'Eigene Lebensmittel';
             return (
               <button
@@ -2143,13 +2066,15 @@ function IngredientCombobox({
                   <strong>{displayName}</strong>
                   {detail && <small>{detail}</small>}
                 </span>
-                <em>
-                  {food.needsReview
-                    ? 'Ungeprüft'
-                    : custom
-                      ? 'Eigenes'
-                      : 'System'}
-                </em>
+                {!everyday && (
+                  <em>
+                    {food.needsReview
+                      ? 'Ungeprüft'
+                      : custom
+                        ? 'Eigenes'
+                        : 'Nährwertdatenbank'}
+                  </em>
+                )}
               </button>
             );
           })}
@@ -2197,6 +2122,10 @@ function IngredientCombobox({
           ? `${results.length} Lebensmittel${actions ? ' und 2 weitere Aktionen' : ''} verfügbar`
           : ''}
       </span>
+      <IngredientRecognition
+        ingredient={ingredient}
+        customFoods={customFoods}
+      />
     </div>
   );
 }
@@ -2494,6 +2423,9 @@ function RecipeEditor({
   onAutosave,
   onDiscardDraft,
   onCreateCustomFood,
+  onLearnFoodAlias,
+  foodAliases,
+  focusNutrition = false,
   onDelete,
   inactive = false,
 }: {
@@ -2516,6 +2448,10 @@ function RecipeEditor({
   ) => Promise<void>;
   onDiscardDraft: (draftId: string) => Promise<void>;
   onCreateCustomFood: (food: CustomFood) => boolean;
+  onLearnFoodAlias: (name: string, foodId: string) => void;
+  foodAliases: Record<string, string>;
+  /** Opened from "Zutaten zuordnen": show the nutrition block right away. */
+  focusNutrition?: boolean;
   onDelete?: () => void;
   inactive?: boolean;
 }) {
@@ -2577,6 +2513,19 @@ function RecipeEditor({
   const [draftSaveStatus, setDraftSaveStatus] = useState<
     'idle' | 'saving' | 'saved'
   >('idle');
+  const extraDetailsRef = useRef<HTMLDetailsElement>(null);
+  const nutritionDetailsRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (!focusNutrition) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (extraDetailsRef.current) extraDetailsRef.current.open = true;
+      if (nutritionDetailsRef.current) {
+        nutritionDetailsRef.current.open = true;
+        nutritionDetailsRef.current.scrollIntoView({ block: 'start' });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusNutrition]);
   const [foodPicker, setFoodPicker] = useState<{
     key: string;
     name: string;
@@ -2807,6 +2756,7 @@ function RecipeEditor({
         previewRecipe,
         draftFoodOverrides,
         customFoods,
+        foodAliases,
       ).then(({ calculation }) => {
         if (!cancelled) setAutomaticCalculation(calculation);
       });
@@ -2820,6 +2770,7 @@ function RecipeEditor({
     customFoods,
     draft.id,
     draftFoodOverrides,
+    foodAliases,
     ingredientSignature,
   ]);
   useEffect(() => {
@@ -3335,7 +3286,7 @@ function RecipeEditor({
                 placeholder="Was macht das Gericht besonders?"
               />
             </label>
-            <details className="recipe-extra-details">
+            <details className="recipe-extra-details" ref={extraDetailsRef}>
               <summary>
                 Weitere Angaben (optional)
                 <ChevronDown size={18} />
@@ -3375,7 +3326,7 @@ function RecipeEditor({
                   })}
                 </div>
               </fieldset>
-              <details className="nutrition-editor">
+              <details className="nutrition-editor" ref={nutritionDetailsRef}>
                 <summary>
                   {proteinPerServing.trim()
                     ? 'Protein: eigene Angabe'
@@ -3677,6 +3628,39 @@ function RecipeEditor({
                           name,
                         })
                       }
+                      onPasteLines={(lines) => {
+                        const parsed = lines
+                          .slice(0, 100)
+                          .map((line, lineIndex): RecipeIngredient => {
+                            const entry = parseIngredientLine(line);
+                            return {
+                              id:
+                                lineIndex === 0
+                                  ? (item.id ?? crypto.randomUUID())
+                                  : crypto.randomUUID(),
+                              amount: entry.amount.slice(0, 100),
+                              unit: entry.unit.slice(0, 100),
+                              name: entry.name.slice(0, 500),
+                              ...(entry.note
+                                ? { note: entry.note.slice(0, 500) }
+                                : {}),
+                              ...(entry.optional ? { optional: true } : {}),
+                            };
+                          })
+                          .filter((entry) => entry.name);
+                        if (!parsed.length) return;
+                        const ingredients = [
+                          ...draft.ingredients.slice(0, index),
+                          ...parsed,
+                          ...draft.ingredients.slice(index + 1),
+                        ].slice(0, 500);
+                        setDraft({ ...draft, ingredients });
+                        setIngredientAnnouncement(
+                          parsed.length === 1
+                            ? 'Zutat wurde aus dem eingefügten Text übernommen.'
+                            : `${parsed.length} Zutaten wurden aus dem eingefügten Text übernommen.`,
+                        );
+                      }}
                       registerInput={(node) => {
                         foodInputRefs.current[item.id ?? String(index)] = node;
                       }}
@@ -3755,6 +3739,51 @@ function RecipeEditor({
                     />
                     Menge an Portionen anpassen
                   </label>
+                  <div className="ingredient-extras">
+                    <label className="ingredient-scaling-toggle">
+                      <input
+                        type="checkbox"
+                        checked={item.optional === true}
+                        aria-label={`Zutat ${index + 1} ist optional`}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            ingredients: draft.ingredients.map(
+                              (entry, itemIndex) => {
+                                if (itemIndex !== index) return entry;
+                                const { optional: _, ...rest } = entry;
+                                return event.target.checked
+                                  ? { ...rest, optional: true }
+                                  : rest;
+                              },
+                            ),
+                          })
+                        }
+                      />
+                      Optional
+                    </label>
+                    <input
+                      className="ingredient-note"
+                      aria-label={`Notiz zu Zutat ${index + 1}`}
+                      value={item.note ?? ''}
+                      maxLength={500}
+                      placeholder="Notiz, z. B. fein gehackt"
+                      onChange={(event) =>
+                        setDraft({
+                          ...draft,
+                          ingredients: draft.ingredients.map(
+                            (entry, itemIndex) => {
+                              if (itemIndex !== index) return entry;
+                              const { note: _, ...rest } = entry;
+                              return event.target.value
+                                ? { ...rest, note: event.target.value }
+                                : rest;
+                            },
+                          ),
+                        })
+                      }
+                    />
+                  </div>
                   {index === 0 && ingredientsError && (
                     <small
                       id="recipe-ingredients-error"
@@ -3918,7 +3947,40 @@ function RecipeEditor({
           mode={foodPicker.mode}
           currentOverride={draftFoodOverrides[foodPicker.key]}
           onClose={() => setFoodPicker(undefined)}
-          onApply={(override) => {
+          onApply={(override, remember) => {
+            if (override?.kind === 'food' && remember) {
+              // Link the row itself and teach the name to every recipe.
+              const foodId = override.foodId;
+              setDraft((current) => ({
+                ...current,
+                ingredients: current.ingredients.map((ingredient, index) =>
+                  ingredientOverrideKey(
+                    current.id ?? 'preview',
+                    ingredient.id ?? `ingredient-${index}`,
+                  ) === foodPicker.key
+                    ? {
+                        ...ingredient,
+                        foodLink: {
+                          kind: foodId.startsWith('mf:')
+                            ? 'catalog'
+                            : foodId.startsWith('custom:')
+                              ? 'custom'
+                              : 'bls',
+                          foodId,
+                        },
+                      }
+                    : ingredient,
+                ),
+              }));
+              setDraftFoodOverrides((current) => {
+                const next = { ...current };
+                delete next[foodPicker.key];
+                return next;
+              });
+              onLearnFoodAlias(foodPicker.name, foodId);
+              setFoodPicker(undefined);
+              return;
+            }
             setDraftFoodOverrides((current) => {
               const next = { ...current };
               if (override) next[foodPicker.key] = override;
@@ -4310,6 +4372,7 @@ function SettingsView({
   onInstall,
   showIosHint,
   onNutritionSettings,
+  onPantry,
   onMealSlots,
   onSaveCustomFood,
   appUpdate,
@@ -4326,6 +4389,10 @@ function SettingsView({
   onInstall: () => Promise<void>;
   showIosHint: boolean;
   onNutritionSettings: (settings: NutritionSettings) => void;
+  onPantry: (
+    foodIds: string | readonly string[],
+    state: PantryState | undefined,
+  ) => void;
   onMealSlots: (slots: MealSlot[]) => void;
   onSaveCustomFood: (food: CustomFood) => boolean;
   appUpdate: AppUpdateControls;
@@ -4339,8 +4406,17 @@ function SettingsView({
     (food) => food.id === customFoodEditorId,
   );
   const proteinGoal = data.nutritionSettings.goals.find(
-    (goal) => goal.period === 'week' && goal.nutrient === 'proteinG',
+    (goal) => goal.period === 'day' && goal.nutrient === 'proteinG',
   );
+  const backupReminder = getBackupReminder(data.lastBackup);
+  const [bodyWeightInput, setBodyWeightInput] = useState('');
+  const [weightHelperOpen, setWeightHelperOpen] = useState(false);
+  // DGE: 0.8 g protein per kg body weight up to 65 years, 1.0 g from 65.
+  const [proteinPerKg, setProteinPerKg] = useState<0.8 | 1>(0.8);
+  const bodyWeight = Number(bodyWeightInput.replace(',', '.'));
+  const bodyWeightValid =
+    Number.isFinite(bodyWeight) && bodyWeight >= 30 && bodyWeight <= 250;
+  const weightBasedGoal = Math.round(bodyWeight * proteinPerKg);
   const [proteinMinimumInput, setProteinMinimumInput] = useState(
     proteinGoal ? String(proteinGoal.minimum) : '',
   );
@@ -4349,14 +4425,18 @@ function SettingsView({
     proteinMinimumInput.trim() !== '' &&
     (!Number.isFinite(parsedProteinMinimum) ||
       parsedProteinMinimum <= 0 ||
-      parsedProteinMinimum > 5_000);
-  function saveProteinMinimum() {
-    if (proteinMinimumInvalid) return;
+      parsedProteinMinimum > 1_000);
+  function saveProteinMinimum(input = proteinMinimumInput) {
+    const parsed = Number(input);
+    if (
+      input.trim() !== '' &&
+      (!Number.isFinite(parsed) || parsed <= 0 || parsed > 1_000)
+    )
+      return;
     const otherGoals = data.nutritionSettings.goals.filter(
-      (goal) => !(goal.period === 'week' && goal.nutrient === 'proteinG'),
+      (goal) => goal.nutrient !== 'proteinG',
     );
-    const minimum =
-      proteinMinimumInput.trim() === '' ? undefined : parsedProteinMinimum;
+    const minimum = input.trim() === '' ? undefined : Math.round(parsed);
     onNutritionSettings({
       ...data.nutritionSettings,
       goals:
@@ -4366,7 +4446,7 @@ function SettingsView({
               ...otherGoals,
               {
                 nutrient: 'proteinG',
-                period: 'week',
+                period: 'day',
                 minimum,
                 enabled: true,
               },
@@ -4377,6 +4457,7 @@ function SettingsView({
     planning: 'Mahlzeiten planen',
     backup: 'Sicherung',
     nutrition: 'Nährwerte & Ziele',
+    pantry: 'Vorratsschrank',
     foods: 'Lebensmittel',
     privacy: 'Datenschutz & Speicher',
     app: 'App & Updates',
@@ -4452,32 +4533,66 @@ function SettingsView({
             onReset={onResetApp}
             onBackup={onBackup}
             mode={panel}
-          />
+          >
+            {panel === 'app' && (installAvailable || showIosHint) && (
+              <div className="maintenance-card app-install-card">
+                <div className="app-card-row">
+                  <span className="mo-icon is-amber" aria-hidden="true">
+                    <Download size={20} />
+                  </span>
+                  <span>
+                    <strong>Als App installieren</strong>
+                    <small>
+                      {showIosHint
+                        ? 'In Safari: Teilen → „Zum Home-Bildschirm“'
+                        : 'Direkt vom Startbildschirm öffnen'}
+                    </small>
+                  </span>
+                </div>
+                {installAvailable && (
+                  <button
+                    className="primary-button"
+                    onClick={() => void onInstall().catch(() => undefined)}
+                  >
+                    App installieren
+                  </button>
+                )}
+              </div>
+            )}
+          </AppMaintenance>
         )}
         {panel === 'backup' && (
           <div className="backup-page">
-            <section className="backup-hero-card">
-              <div className="backup-illustration" aria-hidden="true">
-                <Upload size={52} />
+            <section
+              className={`backup-hero-card is-${backupReminder.kind}`}
+              aria-labelledby="backup-status-title"
+            >
+              <div className="backup-hero-head">
+                <span className="backup-status-icon" aria-hidden="true">
+                  {backupReminder.kind === 'recent' ? (
+                    <ShieldCheck size={28} />
+                  ) : (
+                    <ShieldAlert size={28} />
+                  )}
+                </span>
+                <div>
+                  <h2 id="backup-status-title">{backupReminder.title}</h2>
+                  <span>
+                    {data.lastBackup
+                      ? `Zuletzt am ${shortDate.format(new Date(data.lastBackup))}`
+                      : 'Nur auf diesem Gerät gespeichert'}
+                  </span>
+                </div>
               </div>
-              <h2>
-                {data.lastBackup
-                  ? `Zuletzt gesichert am ${shortDate.format(new Date(data.lastBackup))}`
-                  : 'Noch keine Sicherung'}
-              </h2>
-              <p>
-                Deine Rezepte, Wochenpläne und Einstellungen sind derzeit nur
-                auf diesem Gerät gespeichert.
-              </p>
               <button className="primary-button" onClick={onBackup}>
-                <Download size={19} /> Sicherung erstellen
-                <ChevronRight size={18} />
+                <Download size={19} aria-hidden="true" /> Sicherung erstellen
               </button>
               <button
                 className="secondary-button"
                 onClick={() => fileRef.current?.click()}
               >
-                <Upload size={19} /> Sicherung wiederherstellen
+                <Upload size={19} aria-hidden="true" /> Sicherung
+                wiederherstellen
               </button>
               <input
                 ref={fileRef}
@@ -4490,101 +4605,113 @@ function SettingsView({
                   if (file) onRestore(file);
                 }}
               />
-              <div className="backup-privacy-copy">
-                <LockKeyhole size={23} />
-                <p>
-                  <strong>Sicher. Lokal. In deiner Hand.</strong>
-                  <span>
-                    Mampffred überträgt deine Inhalte an keinen
-                    Mampffred-Server; wir können sie nicht sehen. Nur eine von
-                    dir exportierte Sicherungsdatei verlässt die App – geschützt
-                    mit deinem Passwort. Auch ein Rezept verlässt das Gerät nur,
-                    wenn du es ausdrücklich teilst.
-                  </span>
-                </p>
-              </div>
+              <p>Als Datei auf dein Gerät, geschützt mit deinem Passwort.</p>
             </section>
-            <section className="backup-contents">
-              <h2>Was wird gesichert?</h2>
-              <p>Diese Inhalte bleiben beim Wiederherstellen erhalten:</p>
-              <ul>
+
+            <section aria-labelledby="backup-contents-title">
+              <h2 id="backup-contents-title">Das wird gesichert</h2>
+              <ul className="settings-card backup-contents">
                 <li>
-                  <CookingPot size={21} />
+                  <span className="mo-icon is-green" aria-hidden="true">
+                    <CookingPot size={20} />
+                  </span>
                   <span>
                     <strong>Rezepte & Bilder</strong>
-                    <small>Zutaten, Schritte und lokale Entwürfe</small>
+                    <small>Inklusive Entwürfe</small>
                   </span>
                 </li>
                 <li>
-                  <CalendarDays size={21} />
+                  <span className="mo-icon is-amber" aria-hidden="true">
+                    <CalendarDays size={20} />
+                  </span>
                   <span>
                     <strong>Wochenpläne</strong>
-                    <small>Geplante Mahlzeiten und Portionen</small>
+                    <small>Mahlzeiten und Portionen</small>
                   </span>
                 </li>
                 <li>
-                  <ShoppingCart size={21} />
+                  <span className="mo-icon is-clay" aria-hidden="true">
+                    <ShoppingCart size={20} />
+                  </span>
                   <span>
                     <strong>Einkaufslisten</strong>
                     <small>Offene und erledigte Artikel</small>
                   </span>
                 </li>
                 <li>
-                  <Settings size={21} />
+                  <span className="mo-icon is-sage" aria-hidden="true">
+                    <Settings size={20} />
+                  </span>
                   <span>
-                    <strong>Einstellungen & Lebensmittel</strong>
-                    <small>Eigene Einträge, App-Einstellungen und Ziele</small>
+                    <strong>Einstellungen</strong>
+                    <small>Eigene Lebensmittel und Ziele</small>
                   </span>
                 </li>
               </ul>
             </section>
-            <p className="backup-footer-note">
-              <ShieldCheck size={20} />
-              <span>
-                <strong>Deine Daten. Immer bei dir.</strong>
-                Einfach sichern. Jederzeit wiederherstellen.
+
+            <div className="settings-card backup-privacy-card">
+              <span className="mo-icon is-slate" aria-hidden="true">
+                <LockKeyhole size={20} />
               </span>
-            </p>
+              <span>
+                <strong>Sicher & lokal</strong>
+                <small>
+                  Kein Konto, kein Mampffred-Server. Nur deine Sicherungsdatei
+                  verlässt die App – und Rezepte, die du selbst teilst.
+                </small>
+              </span>
+            </div>
           </div>
         )}
+        {panel === 'pantry' && (
+          <PantrySettings pantry={data.pantry} onPantry={onPantry} />
+        )}
         {panel === 'nutrition' && (
-          <section aria-labelledby="nutrition-settings-title">
-            <h2 id="nutrition-settings-title">Planungshilfe</h2>
-            <div className="settings-card nutrition-settings">
-              <button
-                type="button"
-                className="settings-toggle"
-                role="switch"
-                aria-labelledby="protein-plan-enabled-label"
-                aria-describedby="protein-plan-enabled-help"
-                aria-checked={data.nutritionSettings.enabled}
-                onClick={() =>
-                  onNutritionSettings(
-                    data.nutritionSettings.enabled
-                      ? {
-                          ...data.nutritionSettings,
-                          enabled: false,
-                          automaticEstimates: false,
-                          promptDismissed: true,
-                        }
-                      : { ...data.nutritionSettings, enabled: true },
-                  )
-                }
-              >
-                <span>
-                  <strong id="protein-plan-enabled-label">
-                    Nährwert-Hinweise im Wochenplan
-                  </strong>
-                  <small id="protein-plan-enabled-help">
-                    Fasst verfügbare Proteinwerte aus dem Wochenplan zusammen.
-                  </small>
-                </span>
-                <span className="settings-switch" aria-hidden="true">
-                  <span />
-                </span>
-              </button>
-              {data.nutritionSettings.enabled && (
-                <>
+          <div className="nutrition-panel">
+            <section aria-labelledby="nutrition-settings-title">
+              <h2 id="nutrition-settings-title">Planungshilfe</h2>
+              <div className="settings-card nutrition-settings">
+                <button
+                  type="button"
+                  className="settings-toggle"
+                  role="switch"
+                  aria-labelledby="protein-plan-enabled-label"
+                  aria-describedby="protein-plan-enabled-help"
+                  aria-checked={data.nutritionSettings.enabled}
+                  onClick={() =>
+                    onNutritionSettings(
+                      data.nutritionSettings.enabled
+                        ? {
+                            ...data.nutritionSettings,
+                            enabled: false,
+                            automaticEstimates: false,
+                            promptDismissed: true,
+                          }
+                        : {
+                            ...data.nutritionSettings,
+                            enabled: true,
+                            automaticEstimates: true,
+                          },
+                    )
+                  }
+                >
+                  <span className="mo-icon is-amber" aria-hidden="true">
+                    <Dumbbell size={20} />
+                  </span>
+                  <span>
+                    <strong id="protein-plan-enabled-label">
+                      Protein im Blick
+                    </strong>
+                    <small id="protein-plan-enabled-help">
+                      Je Portion, Tag und Woche
+                    </small>
+                  </span>
+                  <span className="settings-switch" aria-hidden="true">
+                    <span />
+                  </span>
+                </button>
+                {data.nutritionSettings.enabled && (
                   <button
                     type="button"
                     className="settings-toggle settings-toggle-secondary"
@@ -4600,28 +4727,101 @@ function SettingsView({
                       })
                     }
                   >
+                    <span className="mo-icon is-green" aria-hidden="true">
+                      <Sparkles size={20} />
+                    </span>
                     <span>
                       <strong id="automatic-nutrition-label">
-                        Nährwerte automatisch berechnen
+                        Aus Zutaten schätzen
                       </strong>
                       <small id="automatic-nutrition-help">
-                        Nutzt den lokal eingebetteten BLS 4.0. Keine Zutaten
-                        werden versendet. Gramm und Kilogramm werden direkt
-                        berechnet; andere Einheiten brauchen eine belegte
-                        Umrechnung oder deine Korrektur.
+                        Automatisch und offline
                       </small>
                     </span>
                     <span className="settings-switch" aria-hidden="true">
                       <span />
                     </span>
                   </button>
-                  <label className="nutrition-goal-field">
-                    Protein-Richtwert pro Woche (optional)
-                    <span className="input-with-unit">
+                )}
+              </div>
+            </section>
+
+            {data.nutritionSettings.enabled && (
+              <section aria-labelledby="nutrition-goal-title">
+                <h2 id="nutrition-goal-title">Dein Ziel</h2>
+                <div className="settings-card nutrition-settings">
+                  <div className="nutrition-row">
+                    <span className="mo-icon is-sage" aria-hidden="true">
+                      <Users size={20} />
+                    </span>
+                    <span>
+                      <strong id="tracked-servings-label">Deine Portion</strong>
+                      <small>Was du selbst isst</small>
+                    </span>
+                    <span
+                      className="nutrition-stepper"
+                      role="group"
+                      aria-labelledby="tracked-servings-label"
+                    >
+                      <button
+                        type="button"
+                        aria-label="Kleinere Portion"
+                        disabled={
+                          data.nutritionSettings.defaultTrackedServings <= 0.5
+                        }
+                        onClick={() =>
+                          onNutritionSettings({
+                            ...data.nutritionSettings,
+                            defaultTrackedServings: Math.max(
+                              0.5,
+                              data.nutritionSettings.defaultTrackedServings -
+                                0.5,
+                            ),
+                          })
+                        }
+                      >
+                        <Minus size={16} />
+                      </button>
+                      <b aria-live="polite">
+                        {formatQuantity(
+                          data.nutritionSettings.defaultTrackedServings,
+                        )}
+                      </b>
+                      <button
+                        type="button"
+                        aria-label="Größere Portion"
+                        disabled={
+                          data.nutritionSettings.defaultTrackedServings >= 4
+                        }
+                        onClick={() =>
+                          onNutritionSettings({
+                            ...data.nutritionSettings,
+                            defaultTrackedServings: Math.min(
+                              4,
+                              data.nutritionSettings.defaultTrackedServings +
+                                0.5,
+                            ),
+                          })
+                        }
+                      >
+                        <Plus size={16} />
+                      </button>
+                    </span>
+                  </div>
+                  <div className="nutrition-row">
+                    <span className="mo-icon is-clay" aria-hidden="true">
+                      <Target size={20} />
+                    </span>
+                    <label htmlFor="protein-goal-input">
+                      <strong>Protein am Tag</strong>
+                      <small>Optional</small>
+                    </label>
+                    <span className="nutrition-goal-input">
                       <input
+                        id="protein-goal-input"
                         type="number"
                         min="1"
-                        max="5000"
+                        max="1000"
                         step="1"
                         inputMode="numeric"
                         aria-invalid={proteinMinimumInvalid}
@@ -4634,40 +4834,142 @@ function SettingsView({
                         onChange={(event) =>
                           setProteinMinimumInput(event.target.value)
                         }
-                        onBlur={saveProteinMinimum}
+                        onBlur={() => saveProteinMinimum()}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter') event.currentTarget.blur();
                         }}
-                        placeholder="Keine Vorgabe"
                       />
-                      <span>g</span>
+                      <span aria-hidden="true">g</span>
                     </span>
-                  </label>
-                </>
-              )}
-              {proteinMinimumInvalid && (
-                <small
-                  id="protein-goal-error"
-                  className="form-error"
-                  role="status"
-                >
-                  Bitte prüfe den Wochen-Planwert.
-                </small>
-              )}
-              <p id="protein-goal-help">
-                Der Richtwert gilt für die gesamte Woche. Er ist eine grobe
-                Planungshilfe und keine Ernährungsberatung.
-              </p>
+                  </div>
+                  {proteinMinimumInvalid && (
+                    <small
+                      id="protein-goal-error"
+                      className="form-error"
+                      role="status"
+                    >
+                      Bitte gib 1 bis 1000 g ein.
+                    </small>
+                  )}
+                  <button
+                    type="button"
+                    className="nutrition-helper-toggle"
+                    aria-expanded={weightHelperOpen}
+                    aria-controls="nutrition-weight-helper"
+                    onClick={() => setWeightHelperOpen((open) => !open)}
+                  >
+                    Aus Körpergewicht berechnen
+                    <ChevronDown size={16} aria-hidden="true" />
+                  </button>
+                  {weightHelperOpen && (
+                    <div
+                      id="nutrition-weight-helper"
+                      className="nutrition-weight-helper"
+                    >
+                      <label className="nutrition-weight-input">
+                        <span className="sr-only">Dein Körpergewicht</span>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          min="30"
+                          max="250"
+                          value={bodyWeightInput}
+                          onChange={(event) =>
+                            setBodyWeightInput(event.target.value)
+                          }
+                          placeholder="70"
+                        />
+                        <span aria-hidden="true">kg</span>
+                      </label>
+                      <span
+                        className="nutrition-age-choice"
+                        role="radiogroup"
+                        aria-label="Alter"
+                      >
+                        {(
+                          [
+                            [0.8, 'unter 65'],
+                            [1, 'ab 65'],
+                          ] as const
+                        ).map(([factor, label]) => (
+                          <button
+                            key={factor}
+                            type="button"
+                            role="radio"
+                            aria-checked={proteinPerKg === factor}
+                            onClick={() => setProteinPerKg(factor)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </span>
+                      <button
+                        type="button"
+                        className="nutrition-weight-apply"
+                        disabled={!bodyWeightValid}
+                        onClick={() => {
+                          const goal = String(weightBasedGoal);
+                          setProteinMinimumInput(goal);
+                          saveProteinMinimum(goal);
+                          setBodyWeightInput('');
+                          setWeightHelperOpen(false);
+                        }}
+                      >
+                        {bodyWeightValid ? (
+                          <>
+                            <Check size={16} aria-hidden="true" />
+                            {weightBasedGoal} g übernehmen
+                          </>
+                        ) : (
+                          'Gewicht eingeben'
+                        )}
+                      </button>
+                      <small>
+                        {proteinPerKg === 1 ? '1,0' : '0,8'} g je kg laut DGE.
+                        Dein Gewicht wird nicht gespeichert.
+                      </small>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            <p id="protein-goal-help" className="nutrition-disclaimer-line">
+              <Info size={15} aria-hidden="true" />
+              Grobe Planungshilfe, keine Ernährungsberatung.
+            </p>
+            {data.nutritionSettings.enabled && (
               <details className="nutrition-source-details">
-                <summary>Genauigkeit & Datenquelle</summary>
+                <summary>
+                  Genauigkeit & Datenquelle
+                  <ChevronDown size={16} aria-hidden="true" />
+                </summary>
                 <p>
-                  Grundlage ist der Bundeslebensmittelschlüssel (BLS) 4.0 des
-                  Max Rubner-Instituts, CC BY 4.0. Werte beziehen sich auf 100 g
-                  essbaren Anteil und können abweichen.
+                  Rund {catalogFoods.length} Alltagszutaten sind je einem
+                  Eintrag des Bundeslebensmittelschlüssels (BLS 4.0) zugeordnet.
+                  Stück-, Zehen- und Löffelgewichte sind Durchschnittswerte.
+                  Salz, Gewürze und Wasser zählen nicht mit. Alles wird auf
+                  deinem Gerät berechnet.
+                </p>
+                <p className="nutrition-attribution">
+                  Nährwerte: {CATALOG_SOURCE.nutrients.attribution}{' '}
+                  {CATALOG_SOURCE.nutrients.license}.{' '}
+                  <a
+                    href={CATALOG_SOURCE.nutrients.doi}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {CATALOG_SOURCE.nutrients.doi.replace('https://', '')}
+                  </a>
+                  <small>
+                    Prüfsummen:{' '}
+                    {CATALOG_SOURCE.nutrients.sourceSha256.slice(0, 12)}… /{' '}
+                    {CATALOG_SOURCE.nutrients.runtimeSha256.slice(0, 12)}…
+                  </small>
                 </p>
               </details>
-            </div>
-          </section>
+            )}
+          </div>
         )}
         {panel === 'foods' && (
           <section>
@@ -4760,30 +5062,6 @@ function SettingsView({
             </div>
           </section>
         )}
-        {panel === 'app' && (installAvailable || showIosHint) && (
-          <section>
-            <h2>Installation</h2>
-            <div className="settings-card install-settings">
-              <Download size={28} />
-              <div>
-                <strong>Wie eine App verwenden</strong>
-                <small>
-                  {showIosHint
-                    ? 'In Safari: Teilen → „Zum Home-Bildschirm“. '
-                    : 'Installiere Mampffred auf deinem Startbildschirm.'}
-                </small>
-              </div>
-              {installAvailable && (
-                <button
-                  className="primary-button"
-                  onClick={() => void onInstall().catch(() => undefined)}
-                >
-                  App installieren
-                </button>
-              )}
-            </div>
-          </section>
-        )}
         {panel === 'privacy' && (
           <section>
             <h2>Lokale Daten</h2>
@@ -4806,30 +5084,6 @@ function SettingsView({
                 <strong>{data.shopping.length}</strong>
               </div>
             </div>
-          </section>
-        )}
-        {panel === 'app' && (
-          <section>
-            <h2>App</h2>
-            <div className="settings-list compact">
-              <div>
-                <Leaf />
-                <span>Design</span>
-                <strong>Warm & frisch</strong>
-              </div>
-              <div>
-                <ShieldCheck />
-                <span>Version</span>
-                <strong>{APP_VERSION}</strong>
-              </div>
-            </div>
-            <p className="privacy-note">
-              Mampffred hat keine Anmeldung und fragt nie nach Bank- oder
-              Kontopasswörtern. Ein selbst gewähltes Passwort wird nur für
-              verschlüsselte Sicherungen verwendet. Mampffred ist für deinen
-              privaten Gebrauch gebaut. Deine Rezepte, Planungen und Bilder
-              werden nicht an einen App-Server übertragen.
-            </p>
           </section>
         )}
       </div>
@@ -5180,12 +5434,20 @@ function SharedRecipeDialog({
   );
 }
 
+const weekdayShort = new Intl.DateTimeFormat('de-DE', { weekday: 'short' });
+
 function WeekShoppingDialog({
   result,
+  options,
+  today,
+  onRange,
   onCancel,
   onConfirm,
 }: {
   result: WeekShoppingResult;
+  options: WeekShoppingOptions;
+  today: string;
+  onRange: (options: WeekShoppingOptions) => void;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -5193,16 +5455,33 @@ function WeekShoppingDialog({
   const dialogRef = useModalFocus<HTMLElement>(sheetExit.close);
   const sheetSwipe = useSheetSwipeToClose(onCancel);
   const preview = result.preview;
-  const generated = result.shopping.filter(
-    (item) =>
-      item.origin.kind === 'week' &&
-      item.origin.weekStart === preview.weekStart,
+  const days = Array.from({ length: 7 }, (_, index) =>
+    addLocalDays(preview.weekStart, index),
   );
+  const from = options.from ?? days[0];
+  const to = options.to ?? days[6];
+  const generated = groupShoppingItems(
+    result.shopping.filter(
+      (item) =>
+        item.origin.kind === 'week' &&
+        item.origin.weekStart === preview.weekStart,
+    ),
+  );
+  const generatedCount =
+    generated.sections.reduce((sum, section) => sum + section.items.length, 0) +
+    generated.pantry.length;
   const hasChanges =
     preview.addedItemCount +
       preview.updatedItemCount +
       preview.removedItemCount >
     0;
+  const dayLabel = (date: string) =>
+    `${weekdayShort.format(fromIso(date))}${date === today ? ' (heute)' : ''}`;
+  const setRange = (nextFrom: string, nextTo: string) =>
+    onRange({
+      ...(nextFrom !== days[0] ? { from: nextFrom } : {}),
+      ...(nextTo !== days[6] ? { to: nextTo } : {}),
+    });
   return (
     <div
       className={`modal-backdrop align-end ${sheetExit.closing ? 'sheet-backdrop-closing' : ''}`}
@@ -5219,22 +5498,61 @@ function WeekShoppingDialog({
           <div>
             <h2 id="week-shopping-title">Einkauf aus Wochenplan</h2>
             <small>
-              {shortDate.format(fromIso(preview.weekStart))} –{' '}
-              {shortDate.format(fromIso(addLocalDays(preview.weekStart, 6)))}
+              {shortDate.format(fromIso(from))} –{' '}
+              {shortDate.format(fromIso(to))}
             </small>
           </div>
           <IconButton label="Schließen" onClick={sheetExit.close}>
             <X size={20} />
           </IconButton>
         </div>
-        {generated.length ? (
+        <div className="ws-range" role="group" aria-label="Einkaufszeitraum">
+          <label>
+            <span>Einkauf für</span>
+            <select
+              value={from}
+              onChange={(event) =>
+                setRange(
+                  event.target.value,
+                  event.target.value > to ? event.target.value : to,
+                )
+              }
+            >
+              {days.map((date) => (
+                <option key={date} value={date}>
+                  {dayLabel(date)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>bis</span>
+            <select
+              value={to}
+              onChange={(event) =>
+                setRange(
+                  event.target.value < from ? event.target.value : from,
+                  event.target.value,
+                )
+              }
+            >
+              {days.map((date) => (
+                <option key={date} value={date}>
+                  {dayLabel(date)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {generatedCount ? (
           <>
             <p className="sheet-intro">
-              Aus {preview.contributingMealCount} geplanten{' '}
+              {preview.contributingMealCount}{' '}
               {preview.contributingMealCount === 1 ? 'Mahlzeit' : 'Mahlzeiten'}{' '}
-              entstehen {generated.length}{' '}
-              {generated.length === 1 ? 'Einkaufsartikel' : 'Einkaufsartikel'}.
-              Manuell ergänzte Artikel bleiben erhalten.
+              ergeben {generatedCount} Artikel in kaufbaren Mengen.
+              {preview.hiddenPantryCount > 0 &&
+                ` ${preview.hiddenPantryCount} ${preview.hiddenPantryCount === 1 ? 'Artikel hast' : 'Artikel hast'} du immer zu Hause.`}{' '}
+              Eigene Artikel bleiben erhalten.
             </p>
             <div
               className="week-shopping-summary"
@@ -5245,20 +5563,46 @@ function WeekShoppingDialog({
               <span>{preview.removedItemCount} entfernt</span>
             </div>
             <div className="week-shopping-preview">
-              {generated.map((item) => (
-                <div key={item.id}>
-                  <span>
-                    <strong>{item.name}</strong>
-                    <small>{item.source}</small>
-                  </span>
-                  {item.needsReview && <em>Menge prüfen</em>}
-                </div>
+              {[
+                ...generated.sections.map((section) => ({
+                  key: section.aisle,
+                  label: aisleLabel(section.aisle),
+                  items: section.items,
+                })),
+                ...(generated.pantry.length
+                  ? [
+                      {
+                        key: 'pantry',
+                        label: 'Vorrat prüfen',
+                        items: generated.pantry,
+                      },
+                    ]
+                  : []),
+              ].map((group) => (
+                <section key={group.key} aria-label={group.label}>
+                  <h3>{group.label}</h3>
+                  {group.items.map((item) => (
+                    <div key={item.id}>
+                      <span>
+                        <strong>
+                          {item.name}
+                          {item.quantity && <b> · {item.quantity}</b>}
+                        </strong>
+                        <small>
+                          {item.optional ? 'optional · ' : ''}
+                          {item.detail ?? item.source}
+                        </small>
+                      </span>
+                      {item.needsReview && <em>Menge geändert</em>}
+                    </div>
+                  ))}
+                </section>
               ))}
             </div>
             {preview.reviewItemCount > 0 && (
               <p className="review-note">
                 Bereits abgehakte Artikel mit geänderter Menge bleiben abgehakt
-                und werden mit „Menge prüfen“ markiert.
+                und werden mit „Menge geändert“ markiert.
               </p>
             )}
           </>
@@ -5271,21 +5615,23 @@ function WeekShoppingDialog({
               {preview.removedItemCount === 1
                 ? 'erzeugter Wochenartikel wird'
                 : 'erzeugte Wochenartikel werden'}{' '}
-              entfernt. Manuelle Artikel bleiben erhalten.
+              entfernt. Eigene Artikel bleiben erhalten.
             </p>
           </div>
         ) : (
           <div className="no-results compact-empty">
             <ShoppingCart size={30} />
-            <h2>Noch keine Zutaten für diese Woche</h2>
-            <p>Plane zuerst mindestens eine Mahlzeit mit Rezept.</p>
+            <h2>Keine Zutaten in diesem Zeitraum</h2>
+            <p>
+              Plane zuerst mindestens eine Mahlzeit mit Rezept oder wähle andere
+              Tage.
+            </p>
           </div>
         )}
         {preview.overflowItemCount > 0 && (
           <p className="form-error">
-            Die Einkaufsliste wäre um {preview.overflowItemCount}{' '}
-            {preview.overflowItemCount === 1 ? 'Artikel' : 'Artikel'} zu groß.
-            Entferne zuerst andere Einträge.
+            Die Einkaufsliste wäre um {preview.overflowItemCount} Artikel zu
+            groß. Entferne zuerst andere Einträge.
           </p>
         )}
         <div className="dialog-actions">
@@ -5598,11 +5944,62 @@ type PendingPlanUndo = {
   timer: number;
 };
 
+/**
+ * Live nutrition from the bundled catalog, own foods and corrections. The
+ * full BLS is only loaded when a recipe still points into it.
+ */
+function useNutritionResolver(data: AppData): RecipeNutritionResolver {
+  const [blsFoods, setBlsFoods] = useState<readonly FoodReference[]>([]);
+  const needsBls = useMemo(
+    () =>
+      data.recipes.some((recipe) =>
+        recipe.ingredients.some(
+          (ingredient) => ingredient.foodLink?.kind === 'bls',
+        ),
+      ) ||
+      Object.values(data.foodOverrides).some(
+        (override) =>
+          override.kind === 'food' && override.foodId.startsWith('bls'),
+      ) ||
+      Object.values(data.foodAliases).some((id) => id.startsWith('bls')),
+    [data.foodAliases, data.foodOverrides, data.recipes],
+  );
+  useEffect(() => {
+    if (!needsBls || blsFoods.length) return;
+    let cancelled = false;
+    void import('@/lib/bls-catalog')
+      .then(({ blsCatalog }) => {
+        if (!cancelled) setBlsFoods(blsCatalog);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [blsFoods.length, needsBls]);
+  const context = useMemo(
+    () => ({
+      foods: [
+        ...data.customFoods.map(customFoodToReference),
+        ...catalogFoodReferences(),
+        ...blsFoods,
+      ],
+      overrides: data.foodOverrides,
+      foodAliases: data.foodAliases,
+    }),
+    [blsFoods, data.customFoods, data.foodAliases, data.foodOverrides],
+  );
+  return useCallback(
+    (recipe: Recipe) => recipeNutritionEstimate(recipe, context),
+    [context],
+  );
+}
+
 export default function MampffredApp() {
   const appUpdate = useAppUpdate();
   const [maintenanceBusy, setMaintenanceBusy] = useState(false);
   const [data, publishData] = useState<AppData>(() => createEmptyData());
   const mealSlots = getEnabledMealSlots(data);
+  const nutritionOf = useNutritionResolver(data);
   const dataRef = useRef(data);
   const pendingImages = useRef<Record<string, Blob>>({});
   const retainedImages = useRef<string[]>([]);
@@ -5632,14 +6029,17 @@ export default function MampffredApp() {
   const [selectedDayDate, setSelectedDayDate] = useState<string>();
   const [editorRecipeId, setEditorRecipeId] = useState<string>();
   const [nutritionEditQueue, setNutritionEditQueue] = useState<string[]>();
+  const [textImport, setTextImport] = useState<{ text: string }>();
   const [pendingPlanTarget, setPendingPlanTarget] = useState<{
     date: string;
     slot: MealSlot;
   }>();
   const [settings, setSettings] = useState<SettingsPanel>();
   const [backupRequest, setBackupRequest] = useState<BackupRequest>();
-  const [weekShoppingRequest, setWeekShoppingRequest] =
-    useState<WeekShoppingResult>();
+  const [weekShoppingRequest, setWeekShoppingRequest] = useState<{
+    result: WeekShoppingResult;
+    options: WeekShoppingOptions;
+  }>();
   const [deleteRequest, setDeleteRequest] = useState<Recipe>();
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [pendingDeletion, setPendingDeletion] = useState<PendingDeletion>();
@@ -6337,77 +6737,21 @@ export default function MampffredApp() {
       setInstallPrompt(undefined);
     }
   }
-  async function updateNutritionSettings(settings: NutritionSettings) {
-    const data = dataRef.current;
-    const wasAutomatic = data.nutritionSettings.automaticEstimates;
-    if (!settings.automaticEstimates || wasAutomatic) {
-      setData((current) => ({ ...current, nutritionSettings: settings }));
-      return;
-    }
-    const ingredientCount = data.recipes.reduce(
-      (sum, recipe) => sum + recipe.ingredients.length,
-      0,
-    );
-    const ingredientTextLength = data.recipes.reduce(
-      (sum, recipe) =>
-        sum +
-        recipe.ingredients.reduce(
-          (recipeSum, ingredient) =>
-            recipeSum +
-            ingredient.amount.length +
-            ingredient.unit.length +
-            ingredient.name.length,
-          0,
-        ),
-      0,
-    );
-    if (ingredientCount > 5_000 || ingredientTextLength > 250_000) {
-      showToast(
-        'Für die lokale Schätzung sind zu viele Zutaten vorhanden. Teile deine Sammlung zuerst in Sicherungen auf.',
-        5000,
-      );
-      return;
-    }
-    try {
-      const { blsCatalog } = await import('@/lib/bls-catalog');
-      if (dataRef.current !== data) {
-        showToast(
-          'Deine Sammlung wurde inzwischen geändert. Bitte aktiviere die Schätzung erneut.',
-        );
-        return;
-      }
-      const updatedAt = new Date().toISOString();
-      const catalog = [
-        ...data.customFoods.map(customFoodToReference),
-        ...blsCatalog,
-      ];
-      const nextRecipes = data.recipes.map((recipe) => {
-        const calculation = calculateRecipeFromIngredients(
-          recipe,
-          catalog,
-          data.foodOverrides,
-        );
-        return {
-          ...recipe,
-          nutrition: mergeCalculatedNutrition(
-            recipe.nutrition,
-            calculation,
-            updatedAt,
-          ),
-        };
+  function updateNutritionSettings(settings: NutritionSettings) {
+    const wasAutomatic = dataRef.current.nutritionSettings.automaticEstimates;
+    // Estimates are computed live from the catalog; nothing to precompute.
+    setData((current) => ({ ...current, nutritionSettings: settings }));
+    if (settings.automaticEstimates && !wasAutomatic)
+      showToast('Protein wird jetzt aus deinen Zutaten geschätzt.');
+  }
+  function enableNutrition() {
+    if (!dataRef.current.nutritionSettings.enabled)
+      updateNutritionSettings({
+        ...dataRef.current.nutritionSettings,
+        enabled: true,
+        automaticEstimates: true,
       });
-      if (
-        !setData((current) => ({
-          ...current,
-          nutritionSettings: settings,
-          recipes: nextRecipes,
-        }))
-      )
-        return;
-      showToast('Nährwerte wurden aus erkannten Zutaten neu geschätzt.');
-    } catch {
-      showToast('Die lokale Nährwertschätzung ist gerade nicht verfügbar.');
-    }
+    setSettings('nutrition');
   }
   function updateRecipe(recipe: Recipe) {
     setData((current) => ({
@@ -6439,80 +6783,54 @@ export default function MampffredApp() {
     showToast('Fehlende Beispielrezepte wurden hinzugefügt.');
     changeTab('recipes');
   }
-  function openWeekShopping(targetWeekStart: string) {
-    setWeekShoppingRequest(reconcileWeekShopping(data, targetWeekStart));
+  function openWeekShopping(
+    targetWeekStart: string,
+    options: WeekShoppingOptions = storedShoppingRange(
+      data.shopping,
+      targetWeekStart,
+    ) ?? defaultShoppingRange(targetWeekStart),
+  ) {
+    setWeekShoppingRequest({
+      result: reconcileWeekShopping(data, targetWeekStart, options),
+      options,
+    });
+  }
+  /** In the current week, meals of past days are usually already bought. */
+  function defaultShoppingRange(targetWeekStart: string): WeekShoppingOptions {
+    const today = todayLocal(now);
+    return targetWeekStart === startOfLocalWeek(now) && today > targetWeekStart
+      ? { from: today }
+      : {};
   }
   function applyWeekShopping() {
-    const targetWeekStart = weekShoppingRequest?.preview.weekStart;
-    if (!targetWeekStart || weekShoppingRequest.preview.overflowItemCount > 0)
+    const targetWeekStart = weekShoppingRequest?.result.preview.weekStart;
+    const options = weekShoppingRequest?.options ?? {};
+    if (
+      !targetWeekStart ||
+      weekShoppingRequest.result.preview.overflowItemCount > 0
+    )
       return;
     setData((current) => {
-      const result = reconcileWeekShopping(current, targetWeekStart);
+      const result = reconcileWeekShopping(current, targetWeekStart, options);
       if (result.preview.overflowItemCount > 0) return current;
-      return {
-        ...current,
-        shopping: result.shopping.map((item) => {
-          if (
-            item.origin.kind !== 'week' ||
-            item.origin.weekStart !== targetWeekStart ||
-            !item.needsReview
-          )
-            return item;
-          const { needsReview: _, ...reviewedItem } = item;
-          return reviewedItem;
-        }),
-      };
+      return { ...current, shopping: result.shopping };
     });
     setWeekShoppingRequest(undefined);
     changeTab('shopping');
     showToast('Einkauf wurde mit dem Wochenplan aktualisiert.');
   }
   function addRecipeToShopping(recipe: Recipe, servings: number) {
-    const factor = servings / recipe.servings;
     const existing = new Set(
-      data.shopping.map((item) =>
-        `${item.source ?? ''}\0${item.name}`.toLocaleLowerCase('de-DE'),
-      ),
+      data.shopping
+        .filter(
+          (item) =>
+            item.origin.kind === 'recipe' && item.origin.recipeId === recipe.id,
+        )
+        .map((item) => item.name.toLocaleLowerCase('de-DE')),
     );
-    const additions = recipe.ingredients.flatMap((ingredient) => {
-      const scaledAmount = scaledIngredientAmount(
-        ingredient.amount,
-        factor,
-        ingredient.scaleWithServings,
-      );
-      const name = [scaledAmount, ingredient.unit, ingredient.name]
-        .filter(Boolean)
-        .join(' ')
-        .slice(0, 5000);
-      const key = `${recipe.name}\0${name}`.toLocaleLowerCase('de-DE');
-      if (!name || existing.has(key)) return [];
-      existing.add(key);
-      const normalized = ingredient.name.toLocaleLowerCase('de-DE');
-      const category: ShoppingItem['category'] =
-        /brot|brötchen|baguette|toast/.test(normalized)
-          ? 'Backwaren'
-          : /milch|käse|feta|mozzarella|sahne|joghurt|butter/.test(normalized)
-            ? 'Kühlregal'
-            : /reis|nudel|pasta|linse|mehl|öl|gewürz|brühe|kokosmilch/.test(
-                  normalized,
-                )
-              ? 'Vorrat'
-              : /paprika|zucchini|tomate|zwiebel|kartoffel|kürbis|beere|obst|gemüse|basilikum/.test(
-                    normalized,
-                  )
-                ? 'Gemüse & Obst'
-                : 'Sonstiges';
-      return [
-        {
-          id: crypto.randomUUID(),
-          name,
-          category,
-          checked: false,
-          source: recipe.name,
-          origin: { kind: 'recipe', recipeId: recipe.id },
-        } satisfies ShoppingItem,
-      ];
-    });
+    const additions = recipeShoppingItems(data, recipe, servings, () =>
+      crypto.randomUUID(),
+    ).filter((item) => !existing.has(item.name.toLocaleLowerCase('de-DE')));
     const available = Math.max(0, 10_000 - data.shopping.length);
     const acceptedAdditions = additions.slice(0, available);
     if (!acceptedAdditions.length) {
@@ -6527,14 +6845,102 @@ export default function MampffredApp() {
       `${acceptedAdditions.length} ${acceptedAdditions.length === 1 ? 'Zutat wurde' : 'Zutaten wurden'} hinzugefügt.`,
     );
   }
+  function createDraftFromText(parsed: ParsedRecipeText) {
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const draft: RecipeDraft = {
+      id,
+      name: parsed.name.slice(0, 200),
+      description: parsed.description,
+      minutes: parsed.minutes ?? 30,
+      servings: parsed.servings ?? 2,
+      tags: [],
+      ingredients: parsed.ingredients.map((ingredient) => ({
+        id: crypto.randomUUID(),
+        amount: ingredient.amount.slice(0, 100),
+        unit: ingredient.unit.slice(0, 100),
+        name: ingredient.name.slice(0, 500),
+        ...(ingredient.note ? { note: ingredient.note.slice(0, 500) } : {}),
+        ...(ingredient.optional ? { optional: true } : {}),
+        ...(ingredient.scaleWithServings === false
+          ? { scaleWithServings: false }
+          : {}),
+      })),
+      steps: parsed.steps.map((step) => step.slice(0, 5_000)),
+      imageCell: Math.floor(Math.random() * 6),
+      foodOverrides: {},
+      createdAt: now,
+      updatedAt: now,
+    };
+    if (
+      !setData((current) => ({
+        ...current,
+        recipeDrafts: upsertRecipeDraft(current.recipeDrafts, draft),
+      }))
+    )
+      return;
+    setTextImport(undefined);
+    changeTab('recipes');
+    setEditorRecipeId(`draft:${id}`);
+  }
+  function updatePantry(
+    foodIds: string | readonly string[],
+    state: PantryState | undefined,
+  ) {
+    const ids = new Set(typeof foodIds === 'string' ? [foodIds] : foodIds);
+    const affected = dataRef.current.shopping.filter(
+      (item) =>
+        item.foodId &&
+        ids.has(item.foodId) &&
+        item.origin.kind === 'week' &&
+        !item.checked,
+    );
+    // Removal first (with undo), then one update for pantry and flags.
+    if (state === 'always') deleteShoppingItems(affected);
+    if (
+      !setData((current) => {
+        const pantry = { ...current.pantry };
+        for (const id of ids)
+          if (state) pantry[id] = state;
+          else delete pantry[id];
+        return {
+          ...current,
+          pantry,
+          shopping: current.shopping.map((item) => {
+            if (
+              !item.foodId ||
+              !ids.has(item.foodId) ||
+              item.origin.kind !== 'week'
+            )
+              return item;
+            const { pantryCheck: _, ...rest } = item;
+            return state === 'check' ? { ...rest, pantryCheck: true } : rest;
+          }),
+        };
+      })
+    )
+      return;
+    if (state === 'always' && affected.length) return;
+    showToast(
+      ids.size > 1
+        ? `${ids.size} Grundzutaten stehen jetzt im Vorrat.`
+        : state === 'always'
+          ? 'Kommt nicht mehr auf deine Einkaufslisten.'
+          : state === 'check'
+            ? 'Steht ab jetzt unter „Vorrat prüfen“.'
+            : 'Wird wieder normal eingekauft.',
+    );
+  }
   function deleteShoppingItems(items: ShoppingItem[]) {
     if (!items.length) return;
     if (pendingShoppingDeletion) {
       window.clearTimeout(pendingShoppingDeletion.cleanupTimer);
       deletionTimers.current.delete(pendingShoppingDeletion.cleanupTimer);
     }
+    // Latest committed list, not the render-time one, so changes made just
+    // before (e.g. by the pantry) are not undone.
     const deletion = removeShoppingItems(
-      data.shopping,
+      dataRef.current.shopping,
       new Set(items.map((item) => item.id)),
     );
     if (!deletion.removed.length) return;
@@ -6726,9 +7132,25 @@ export default function MampffredApp() {
     try {
       if (file.size > MAX_SHARED_RECIPE_FILE_BYTES)
         throw new Error('SHARED_RECIPE_TOO_LARGE');
-      const imported = await parseSharedRecipeFile(await file.text());
-      setRecipeImportError(undefined);
-      setSharedRecipePreview(imported);
+      const contents = await file.text();
+      try {
+        const imported = await parseSharedRecipeFile(contents);
+        setRecipeImportError(undefined);
+        setSharedRecipePreview(imported);
+      } catch (error) {
+        // A plain text recipe (e.g. exported from a messenger) is not a
+        // Mampffred file, but it can still become a draft.
+        const parsed = parseRecipeText(contents);
+        if (
+          !contents.trimStart().startsWith('{') &&
+          parsed.ingredients.length
+        ) {
+          setRecipeImportError(undefined);
+          setTextImport({ text: contents.slice(0, 50_000) });
+          return;
+        }
+        throw error;
+      }
     } catch (error) {
       setRecipeImportError(recipeImportErrorMessage(error));
     }
@@ -6975,15 +7397,9 @@ export default function MampffredApp() {
       name: draft.name.trim(),
       description: draft.description.trim(),
       tags: draft.tags.map((tag) => tag.trim()).filter(Boolean),
-      ingredients: draft.ingredients
-        .map((ingredient) => ({
-          id: ingredient.id ?? crypto.randomUUID(),
-          amount: ingredient.amount.trim(),
-          unit: ingredient.unit.trim(),
-          name: ingredient.name.trim(),
-          ...(ingredient.foodLink ? { foodLink: ingredient.foodLink } : {}),
-        }))
-        .filter((ingredient) => ingredient.name),
+      ingredients: normalizeEditedIngredients(draft.ingredients, () =>
+        crypto.randomUUID(),
+      ),
       steps: draft.steps.map((step) => step.trim()).filter(Boolean),
       id,
       shareId: draft.shareId ?? `local:${id}`,
@@ -6992,21 +7408,20 @@ export default function MampffredApp() {
     };
     let data = dataRef.current;
     const previousRecipe = data.recipes.find((item) => item.id === id);
-    const mergedFoodOverrides = replaceRecipeFoodOverrides(
-      data.foodOverrides,
-      id,
-      previousRecipe?.ingredients ?? [],
-      recipe.ingredients,
-      foodOverrides,
+    // Estimates are computed live and not stored; own and imported values
+    // stay untouched.
+    const ownNutrients = Object.fromEntries(
+      Object.entries(recipe.nutrition?.wholeRecipe ?? {}).filter(
+        ([, metric]) => metric && metric.source.kind !== 'dataset',
+      ),
     );
-    if (data.nutritionSettings.automaticEstimates) {
-      const calculated = await calculateWithBundledFoodData(
-        recipe,
-        mergedFoodOverrides,
-        data.customFoods,
-      );
-      recipe = { ...recipe, nutrition: calculated.nutrition };
-    }
+    recipe = {
+      ...recipe,
+      nutrition:
+        recipe.nutrition && Object.keys(ownNutrients).length
+          ? { ...recipe.nutrition, wholeRecipe: ownNutrients }
+          : undefined,
+    };
     data = dataRef.current;
     const nextData = migrateAppData({
       ...data,
@@ -7207,7 +7622,8 @@ export default function MampffredApp() {
     setMaintenanceBusy(true);
     try {
       await lastSave.current;
-      const next = restoreStandardRecipes(dataRef.current);
+      const current = dataRef.current;
+      const next = restoreStandardRecipes(current);
       const { loadStandardRecipeImages } =
         await import('@/lib/standard-recipe-images');
       const bundledKeys = new Set(
@@ -7233,7 +7649,14 @@ export default function MampffredApp() {
           if (!urls[key]) urls[key] = URL.createObjectURL(image);
         return urls;
       });
-      showToast('Fehlende Standardrezepte wurden ergänzt.');
+      const added = standardRecipeCount(next) - standardRecipeCount(current);
+      showToast(
+        added > 0
+          ? `${added} ${added === 1 ? 'Standardrezept wurde' : 'Standardrezepte wurden'} ergänzt.`
+          : missingKeys.length
+            ? 'Fehlende Bilder der Standardrezepte wurden ergänzt.'
+            : 'Alle Standardrezepte sind vorhanden.',
+      );
     } finally {
       setMaintenanceBusy(false);
     }
@@ -7468,537 +7891,597 @@ export default function MampffredApp() {
     );
   return (
     <RecipeImageRequestContext.Provider value={requestRecipeImage}>
-      <div inert={storageFailure} aria-hidden={storageFailure || undefined}>
-        <main className="page-stage">
-          {mutationError && (
-            <div className="data-error-banner" role="alert">
-              {mutationError}
-              <button onClick={() => setMutationError('')}>Verstanden</button>
-            </div>
-          )}
-          {appUpdate.status === 'available' &&
-            !editorRecipeId &&
-            !planner &&
-            !quickPlanTargets &&
-            !settings &&
-            !backupRequest &&
-            !selectedRecipeId &&
-            !selectedDayDate && (
-              <div className="app-update-banner" role="status">
-                <div className="app-update-message">
-                  <Download size={24} aria-hidden="true" />
-                  <span>
-                    <strong>Ein Update für Mampffred ist da!</strong>
-                    <small>Die neue Version ist bereit.</small>
-                  </span>
-                </div>
-                <button
-                  onClick={() =>
-                    void applyAppUpdate().catch(() =>
-                      showToast(
-                        'Update nicht abgeschlossen. Bitte erneut versuchen.',
-                      ),
-                    )
-                  }
-                >
-                  Jetzt aktualisieren
-                </button>
+      <RecipeNutritionContext.Provider value={nutritionOf}>
+        <div inert={storageFailure} aria-hidden={storageFailure || undefined}>
+          <main className="page-stage">
+            {mutationError && (
+              <div className="data-error-banner" role="alert">
+                {mutationError}
+                <button onClick={() => setMutationError('')}>Verstanden</button>
               </div>
             )}
-          <div className="desktop-intro">
-            <Image
-              src={assetUrl('assets/mampffred-mascot-small.png')}
-              width={112}
-              height={132}
-              alt="Mampffred"
-            />
-            <p className="wordmark">Mampffred</p>
-            <h1>
-              Plan rein.
-              <br />
-              Mahlzeit raus.
-            </h1>
-            <p>
-              Deine private Rezept- und Essensplanung. Offline, übersichtlich
-              und nur für dich.
-            </p>
-            <div className="intro-pill">
-              <LockKeyhole size={17} /> Alles bleibt auf diesem Gerät
-            </div>
-          </div>
-          <div
-            ref={appFrameRef}
-            className="app-frame"
-            data-tab-direction={tabDirection}
-            aria-hidden={
-              Boolean(
-                selectedDayDate ||
-                selectedRecipeId ||
-                editorRecipeId ||
-                planner ||
-                quickPlanTargets ||
-                settings ||
-                backupRequest ||
-                weekShoppingRequest ||
-                sharedRecipePreview ||
-                recipeImportError ||
-                shareCopyText ||
-                shareFallback,
-              ) || undefined
-            }
-            inert={
-              Boolean(
-                selectedDayDate ||
-                selectedRecipeId ||
-                editorRecipeId ||
-                planner ||
-                quickPlanTargets ||
-                settings ||
-                backupRequest ||
-                weekShoppingRequest ||
-                sharedRecipePreview ||
-                recipeImportError ||
-                shareCopyText ||
-                shareFallback,
-              ) || undefined
-            }
-          >
-            {tab === 'today' && (
-              <TodayView
-                data={data}
-                now={now}
-                imageUrls={imageUrls}
-                onRecipe={(recipe) => {
-                  setRecipePlanWeekStart(undefined);
-                  setSelectedRecipeId(recipe.id);
-                }}
-                onSettings={() => changeTab('more')}
-                onBackup={() => setBackupRequest({ mode: 'create' })}
-                onPlan={(slot, date) => openPlanner(date, slot)}
-                onRemove={(slot, date) => removePlannedMeal(date, slot)}
-                onPlanSuggestion={(slot, date, recipe) =>
-                  planSuggestion(date, slot, recipe)
-                }
-                onOpenWeek={() => {
-                  setWeekStart(startOfLocalWeek(now));
-                  changeTab('week');
-                }}
-                onAddRecipe={openNewRecipeEditor}
-                onAddSamples={addSampleRecipes}
+            {appUpdate.status === 'available' &&
+              !editorRecipeId &&
+              !planner &&
+              !quickPlanTargets &&
+              !settings &&
+              !backupRequest &&
+              !selectedRecipeId &&
+              !selectedDayDate && (
+                <div className="app-update-banner" role="status">
+                  <div className="app-update-message">
+                    <Download size={24} aria-hidden="true" />
+                    <span>
+                      <strong>Ein Update für Mampffred ist da!</strong>
+                      <small>Die neue Version ist bereit.</small>
+                    </span>
+                  </div>
+                  <button
+                    onClick={() =>
+                      void applyAppUpdate().catch(() =>
+                        showToast(
+                          'Update nicht abgeschlossen. Bitte erneut versuchen.',
+                        ),
+                      )
+                    }
+                  >
+                    Jetzt aktualisieren
+                  </button>
+                </div>
+              )}
+            <div className="desktop-intro">
+              <Image
+                src={assetUrl('assets/mampffred-mascot-small.png')}
+                width={112}
+                height={132}
+                alt="Mampffred"
               />
-            )}
-            {tab === 'week' && (
-              <WeekView
+              <p className="wordmark">Mampffred</p>
+              <h1>
+                Plan rein.
+                <br />
+                Mahlzeit raus.
+              </h1>
+              <p>
+                Deine private Rezept- und Essensplanung. Offline, übersichtlich
+                und nur für dich.
+              </p>
+              <div className="intro-pill">
+                <LockKeyhole size={17} /> Alles bleibt auf diesem Gerät
+              </div>
+            </div>
+            <div
+              ref={appFrameRef}
+              className="app-frame"
+              data-tab-direction={tabDirection}
+              aria-hidden={
+                Boolean(
+                  selectedDayDate ||
+                  selectedRecipeId ||
+                  editorRecipeId ||
+                  planner ||
+                  quickPlanTargets ||
+                  settings ||
+                  backupRequest ||
+                  weekShoppingRequest ||
+                  sharedRecipePreview ||
+                  recipeImportError ||
+                  shareCopyText ||
+                  shareFallback,
+                ) || undefined
+              }
+              inert={
+                Boolean(
+                  selectedDayDate ||
+                  selectedRecipeId ||
+                  editorRecipeId ||
+                  planner ||
+                  quickPlanTargets ||
+                  settings ||
+                  backupRequest ||
+                  weekShoppingRequest ||
+                  sharedRecipePreview ||
+                  recipeImportError ||
+                  shareCopyText ||
+                  shareFallback,
+                ) || undefined
+              }
+            >
+              {tab === 'today' && (
+                <TodayView
+                  data={data}
+                  now={now}
+                  imageUrls={imageUrls}
+                  onRecipe={(recipe) => {
+                    setRecipePlanWeekStart(undefined);
+                    setSelectedRecipeId(recipe.id);
+                  }}
+                  onSettings={() => changeTab('more')}
+                  onBackup={() => setBackupRequest({ mode: 'create' })}
+                  onPlan={(slot, date) => openPlanner(date, slot)}
+                  onRemove={(slot, date) => removePlannedMeal(date, slot)}
+                  onPlanSuggestion={(slot, date, recipe) =>
+                    planSuggestion(date, slot, recipe)
+                  }
+                  onOpenWeek={() => {
+                    setWeekStart(startOfLocalWeek(now));
+                    changeTab('week');
+                  }}
+                  onAddRecipe={openNewRecipeEditor}
+                  onAddSamples={addSampleRecipes}
+                />
+              )}
+              {tab === 'week' && (
+                <WeekView
+                  data={data}
+                  now={now}
+                  imageUrls={imageUrls}
+                  weekStart={weekStart}
+                  onWeekStart={setWeekStart}
+                  onAdd={(date, slot) => openPlanner(date, slot)}
+                  onFillWeek={() => openQuickPlan(weekStart)}
+                  onPlanIdea={(recipe) => planIdea(recipe, weekStart)}
+                  onCreateShopping={() => openWeekShopping(weekStart)}
+                  onNutritionSetup={enableNutrition}
+                  onDismissNutrition={() =>
+                    setData((current) => ({
+                      ...current,
+                      nutritionSettings: {
+                        ...current.nutritionSettings,
+                        promptDismissed: true,
+                      },
+                    }))
+                  }
+                  onEditRecipes={(recipes) => {
+                    if (!recipes[0]) return;
+                    setNutritionEditQueue(recipes.map((recipe) => recipe.id));
+                    openExistingRecipeEditor(recipes[0].id);
+                  }}
+                  onOpenRecipe={(recipe) => {
+                    setRecipePlanWeekStart(weekStart);
+                    setSelectedRecipeId(recipe.id);
+                  }}
+                  onOpenDay={setSelectedDayDate}
+                  onSettings={() => changeTab('more')}
+                />
+              )}
+              {tab === 'recipes' && (
+                <RecipesView
+                  data={data}
+                  imageUrls={imageUrls}
+                  query={recipeQuery}
+                  filter={recipeFilter}
+                  onQuery={setRecipeQuery}
+                  onFilter={setRecipeFilter}
+                  onRecipe={(recipe) => {
+                    setRecipePlanWeekStart(undefined);
+                    setSelectedRecipeId(recipe.id);
+                  }}
+                  onDraft={(draft) => setEditorRecipeId(`draft:${draft.id}`)}
+                  onPasteText={() => setTextImport({ text: '' })}
+                  onDiscardDraft={async (id) => {
+                    await discardRecipeDraft(id);
+                    showToast('Entwurf verworfen.');
+                  }}
+                  onAdd={openNewRecipeEditor}
+                  onAddSamples={addSampleRecipes}
+                  onToggleFavorite={(recipe) =>
+                    updateRecipe({ ...recipe, favorite: !recipe.favorite })
+                  }
+                  onImport={(file) => void importRecipeFile(file)}
+                />
+              )}
+              {tab === 'shopping' && (
+                <ShoppingView
+                  data={data}
+                  now={now}
+                  weekStart={weekStart}
+                  onWeekStart={setWeekStart}
+                  onChange={(shopping) =>
+                    setData((current) => ({ ...current, shopping }))
+                  }
+                  onRemove={deleteShoppingItems}
+                  onFromWeek={() => openWeekShopping(weekStart)}
+                  onPantry={updatePantry}
+                  onToast={showToast}
+                  onAisleOrder={(aisleOrder) =>
+                    setData((current) => ({ ...current, aisleOrder }))
+                  }
+                />
+              )}
+              {tab === 'more' && (
+                <MoreView data={data} now={now} onOpen={setSettings} />
+              )}
+              <BottomNav tab={tab} onTab={changeTab} />
+              {saveState !== 'idle' && (
+                <div
+                  className={`save-indicator ${saveState}`}
+                  role="status"
+                  aria-live="polite"
+                >
+                  {saveState === 'saving' ? (
+                    <>
+                      <LoaderCircle size={14} className="status-spinner" />{' '}
+                      Speichert …
+                    </>
+                  ) : saveState === 'saved' ? (
+                    <>
+                      <Check size={14} /> Gespeichert
+                    </>
+                  ) : (
+                    <>
+                      <Info size={14} /> Nicht gespeichert
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+            {selectedDayDate && (
+              <DayDetailSheet
                 data={data}
-                now={now}
+                date={selectedDayDate}
                 imageUrls={imageUrls}
-                weekStart={weekStart}
-                onWeekStart={setWeekStart}
-                onAdd={(date, slot) => openPlanner(date, slot)}
-                onFillWeek={() => openQuickPlan(weekStart)}
-                onPlanIdea={(recipe) => planIdea(recipe, weekStart)}
-                onCreateShopping={() => openWeekShopping(weekStart)}
-                onNutritionSetup={() => setSettings('nutrition')}
-                onDismissNutrition={() =>
-                  setData((current) => ({
-                    ...current,
-                    nutritionSettings: {
-                      ...current.nutritionSettings,
-                      promptDismissed: true,
-                    },
-                  }))
-                }
-                onEditRecipes={(recipes) => {
-                  if (!recipes[0]) return;
-                  setNutritionEditQueue(recipes.map((recipe) => recipe.id));
-                  openExistingRecipeEditor(recipes[0].id);
-                }}
+                onClose={() => setSelectedDayDate(undefined)}
                 onOpenRecipe={(recipe) => {
                   setRecipePlanWeekStart(weekStart);
                   setSelectedRecipeId(recipe.id);
                 }}
-                onOpenDay={setSelectedDayDate}
-                onSettings={() => changeTab('more')}
+                onPlan={(date, slot, recipeId) => {
+                  openPlanner(date, slot, recipeId);
+                }}
+                onRemove={removePlannedMeal}
+                onNutritionSetup={() => {
+                  setSettings('nutrition');
+                }}
+                inactive={Boolean(selectedRecipeId || planner || settings)}
               />
             )}
-            {tab === 'recipes' && (
-              <RecipesView
+            {selectedRecipe && (
+              <RecipeDetail
+                recipe={selectedRecipe}
+                automaticEstimates={
+                  data.nutritionSettings.enabled &&
+                  data.nutritionSettings.automaticEstimates
+                }
+                imageUrls={imageUrls}
+                onClose={() => {
+                  if (plannerResume) {
+                    setSelectedRecipeId(plannerResume.backgroundRecipeId);
+                    setPlanner(plannerResume.state);
+                    setPlannerResume(undefined);
+                    return;
+                  }
+                  setSelectedRecipeId(undefined);
+                  setRecipePlanWeekStart(undefined);
+                }}
+                onEdit={() => openExistingRecipeEditor(selectedRecipe.id)}
+                onDelete={() => setDeleteRequest(selectedRecipe)}
+                onPlan={(servings) =>
+                  openRecipePlanner(selectedRecipe, servings)
+                }
+                onFavorite={() =>
+                  updateRecipe({
+                    ...selectedRecipe,
+                    favorite: !selectedRecipe.favorite,
+                  })
+                }
+                onAddToShopping={(servings) =>
+                  addRecipeToShopping(selectedRecipe, servings)
+                }
+                onShare={() => void shareRecipe(selectedRecipe)}
+                shareReady={
+                  preparedShareFile?.recipe === selectedRecipe &&
+                  preparedShareLink?.recipe === selectedRecipe &&
+                  !nativeShareBusy
+                }
+                onExport={() => void exportRecipeFile(selectedRecipe)}
+                exportBusy={exportBusy}
+                inactive={Boolean(
+                  editorRecipeId ||
+                  deleteRequest ||
+                  planner ||
+                  sharedRecipePreview ||
+                  shareCopyText ||
+                  shareFallback,
+                )}
+              />
+            )}
+            {editorRecipeId && (
+              <RecipeEditor
+                recipe={editorRecipe}
+                savedDraft={editorSavedDraft}
+                automaticEstimates={data.nutritionSettings.automaticEstimates}
+                foodOverrides={data.foodOverrides}
+                customFoods={data.customFoods}
+                foodAliases={data.foodAliases}
+                focusNutrition={Boolean(
+                  editorRecipe && nutritionEditQueue?.includes(editorRecipe.id),
+                )}
+                onLearnFoodAlias={(name, foodId) =>
+                  setData((current) => {
+                    const key = foldFoodName(name);
+                    // Stay within what validation accepts; very long names
+                    // are linked in the recipe itself anyway.
+                    if (
+                      !key ||
+                      key.length > 300 ||
+                      (!Object.hasOwn(current.foodAliases, key) &&
+                        Object.keys(current.foodAliases).length >= 2_000)
+                    )
+                      return current;
+                    return {
+                      ...current,
+                      foodAliases: { ...current.foodAliases, [key]: foodId },
+                    };
+                  })
+                }
+                currentImageUrl={
+                  (editorSavedDraft?.imageKey ?? editorRecipe?.imageKey)
+                    ? imageUrls[
+                        (editorSavedDraft?.imageKey ?? editorRecipe?.imageKey)!
+                      ]
+                    : undefined
+                }
+                onClose={() => {
+                  setEditorRecipeId(undefined);
+                  setPendingPlanTarget(undefined);
+                  setNutritionEditQueue(undefined);
+                }}
+                onSave={saveRecipeDraft}
+                onAutosave={autosaveRecipeDraft}
+                onDiscardDraft={discardRecipeDraft}
+                onCreateCustomFood={addCustomFood}
+                onDelete={
+                  editorRecipe
+                    ? () => setDeleteRequest(editorRecipe)
+                    : undefined
+                }
+                inactive={Boolean(deleteRequest)}
+              />
+            )}
+            {deleteRequest && (
+              <DeleteRecipeDialog
+                recipe={deleteRequest}
+                plannedCount={data.plan.reduce(
+                  (total, day) =>
+                    total +
+                    day.meals.filter(
+                      (meal) => meal.recipeId === deleteRequest.id,
+                    ).length,
+                  0,
+                )}
+                busy={deleteBusy}
+                onCancel={() => setDeleteRequest(undefined)}
+                onConfirm={() => void confirmDeleteRecipe()}
+              />
+            )}
+            {planner && (
+              <PlannerSheet
                 data={data}
                 imageUrls={imageUrls}
-                query={recipeQuery}
-                filter={recipeFilter}
-                onQuery={setRecipeQuery}
-                onFilter={setRecipeFilter}
-                onRecipe={(recipe) => {
-                  setRecipePlanWeekStart(undefined);
-                  setSelectedRecipeId(recipe.id);
+                initialDate={planner.date}
+                initialSlot={planner.slot}
+                initialRecipeId={planner.recipeId}
+                initialServings={planner.servings}
+                initialQuery={planner.query}
+                initialFilter={planner.filter}
+                onClose={() => setPlanner(undefined)}
+                onPlan={planRecipe}
+                onRemove={removePlannedMeal}
+                onOpenRecipe={(recipeId, state) => {
+                  setPlannerResume({
+                    state,
+                    backgroundRecipeId: selectedRecipeId,
+                  });
+                  setPlanner(undefined);
+                  setSelectedRecipeId(recipeId);
                 }}
-                onDraft={(draft) => setEditorRecipeId(`draft:${draft.id}`)}
-                onDiscardDraft={async (id) => {
-                  await discardRecipeDraft(id);
-                  showToast('Entwurf verworfen.');
-                }}
-                onAdd={openNewRecipeEditor}
-                onAddSamples={addSampleRecipes}
-                onToggleFavorite={(recipe) =>
-                  updateRecipe({ ...recipe, favorite: !recipe.favorite })
-                }
-                onImport={(file) => void importRecipeFile(file)}
               />
             )}
-            {tab === 'shopping' && (
-              <ShoppingView
+            {quickPlanTargets && (
+              <QuickPlanSheet
                 data={data}
-                now={now}
-                weekStart={weekStart}
-                onWeekStart={setWeekStart}
-                onChange={(shopping) =>
-                  setData((current) => ({ ...current, shopping }))
-                }
-                onRemove={deleteShoppingItems}
-                onFromWeek={() => openWeekShopping(weekStart)}
+                imageUrls={imageUrls}
+                targets={quickPlanTargets}
+                onClose={() => setQuickPlanTargets(undefined)}
+                onConfirm={confirmQuickPlan}
               />
             )}
-            {tab === 'more' && (
-              <MoreView data={data} now={now} onOpen={setSettings} />
-            )}
-            <BottomNav tab={tab} onTab={changeTab} />
-            {saveState !== 'idle' && (
-              <div
-                className={`save-indicator ${saveState}`}
-                role="status"
-                aria-live="polite"
-              >
-                {saveState === 'saving' ? (
-                  <>
-                    <LoaderCircle size={14} className="status-spinner" />{' '}
-                    Speichert …
-                  </>
-                ) : saveState === 'saved' ? (
-                  <>
-                    <Check size={14} /> Gespeichert
-                  </>
-                ) : (
-                  <>
-                    <Info size={14} /> Nicht gespeichert
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-          {selectedDayDate && (
-            <DayDetailSheet
-              data={data}
-              date={selectedDayDate}
-              imageUrls={imageUrls}
-              onClose={() => setSelectedDayDate(undefined)}
-              onOpenRecipe={(recipe) => {
-                setRecipePlanWeekStart(weekStart);
-                setSelectedRecipeId(recipe.id);
-              }}
-              onPlan={(date, slot, recipeId) => {
-                openPlanner(date, slot, recipeId);
-              }}
-              onRemove={removePlannedMeal}
-              onNutritionSetup={() => {
-                setSettings('nutrition');
-              }}
-              inactive={Boolean(selectedRecipeId || planner || settings)}
-            />
-          )}
-          {selectedRecipe && (
-            <RecipeDetail
-              recipe={selectedRecipe}
-              automaticEstimates={
-                data.nutritionSettings.enabled &&
-                data.nutritionSettings.automaticEstimates
-              }
-              imageUrls={imageUrls}
-              onClose={() => {
-                if (plannerResume) {
-                  setSelectedRecipeId(plannerResume.backgroundRecipeId);
-                  setPlanner(plannerResume.state);
-                  setPlannerResume(undefined);
-                  return;
+            {settings && (
+              <SettingsView
+                data={data}
+                panel={settings}
+                onClose={() => setSettings(undefined)}
+                onBackup={() => setBackupRequest({ mode: 'create' })}
+                onRestore={(file) =>
+                  setBackupRequest({ mode: 'restore', file })
                 }
-                setSelectedRecipeId(undefined);
-                setRecipePlanWeekStart(undefined);
-              }}
-              onEdit={() => openExistingRecipeEditor(selectedRecipe.id)}
-              onDelete={() => setDeleteRequest(selectedRecipe)}
-              onPlan={(servings) => openRecipePlanner(selectedRecipe, servings)}
-              onFavorite={() =>
-                updateRecipe({
-                  ...selectedRecipe,
-                  favorite: !selectedRecipe.favorite,
-                })
-              }
-              onAddToShopping={(servings) =>
-                addRecipeToShopping(selectedRecipe, servings)
-              }
-              onShare={() => void shareRecipe(selectedRecipe)}
-              shareReady={
-                preparedShareFile?.recipe === selectedRecipe &&
-                preparedShareLink?.recipe === selectedRecipe &&
-                !nativeShareBusy
-              }
-              onExport={() => void exportRecipeFile(selectedRecipe)}
-              exportBusy={exportBusy}
-              inactive={Boolean(
-                editorRecipeId ||
-                deleteRequest ||
-                planner ||
-                sharedRecipePreview ||
-                shareCopyText ||
-                shareFallback,
-              )}
-            />
-          )}
-          {editorRecipeId && (
-            <RecipeEditor
-              recipe={editorRecipe}
-              savedDraft={editorSavedDraft}
-              automaticEstimates={data.nutritionSettings.automaticEstimates}
-              foodOverrides={data.foodOverrides}
-              customFoods={data.customFoods}
-              currentImageUrl={
-                (editorSavedDraft?.imageKey ?? editorRecipe?.imageKey)
-                  ? imageUrls[
-                      (editorSavedDraft?.imageKey ?? editorRecipe?.imageKey)!
-                    ]
-                  : undefined
-              }
-              onClose={() => {
-                setEditorRecipeId(undefined);
-                setPendingPlanTarget(undefined);
-                setNutritionEditQueue(undefined);
-              }}
-              onSave={saveRecipeDraft}
-              onAutosave={autosaveRecipeDraft}
-              onDiscardDraft={discardRecipeDraft}
-              onCreateCustomFood={addCustomFood}
-              onDelete={
-                editorRecipe ? () => setDeleteRequest(editorRecipe) : undefined
-              }
-              inactive={Boolean(deleteRequest)}
-            />
-          )}
-          {deleteRequest && (
-            <DeleteRecipeDialog
-              recipe={deleteRequest}
-              plannedCount={data.plan.reduce(
-                (total, day) =>
-                  total +
-                  day.meals.filter((meal) => meal.recipeId === deleteRequest.id)
-                    .length,
-                0,
-              )}
-              busy={deleteBusy}
-              onCancel={() => setDeleteRequest(undefined)}
-              onConfirm={() => void confirmDeleteRecipe()}
-            />
-          )}
-          {planner && (
-            <PlannerSheet
-              data={data}
-              imageUrls={imageUrls}
-              initialDate={planner.date}
-              initialSlot={planner.slot}
-              initialRecipeId={planner.recipeId}
-              initialServings={planner.servings}
-              initialQuery={planner.query}
-              initialFilter={planner.filter}
-              onClose={() => setPlanner(undefined)}
-              onPlan={planRecipe}
-              onRemove={removePlannedMeal}
-              onOpenRecipe={(recipeId, state) => {
-                setPlannerResume({
-                  state,
-                  backgroundRecipeId: selectedRecipeId,
-                });
-                setPlanner(undefined);
-                setSelectedRecipeId(recipeId);
-              }}
-            />
-          )}
-          {quickPlanTargets && (
-            <QuickPlanSheet
-              data={data}
-              imageUrls={imageUrls}
-              targets={quickPlanTargets}
-              onClose={() => setQuickPlanTargets(undefined)}
-              onConfirm={confirmQuickPlan}
-            />
-          )}
-          {settings && (
-            <SettingsView
-              data={data}
-              panel={settings}
-              onClose={() => setSettings(undefined)}
-              onBackup={() => setBackupRequest({ mode: 'create' })}
-              onRestore={(file) => setBackupRequest({ mode: 'restore', file })}
-              inactive={Boolean(backupRequest)}
-              installAvailable={Boolean(installPrompt)}
-              onInstall={installApp}
-              onNutritionSettings={(nutritionSettings) =>
-                void updateNutritionSettings(nutritionSettings)
-              }
-              onMealSlots={(enabledMealSlots) =>
-                setData((current) => {
-                  if (!enabledMealSlots.length) return current;
-                  let next = {
-                    ...current,
-                    enabledMealSlots: ALL_MEAL_SLOTS.filter((slot) =>
-                      enabledMealSlots.includes(slot),
-                    ),
-                  };
-                  const weeks = new Set(
-                    current.shopping.flatMap((item) =>
-                      item.origin.kind === 'week'
-                        ? [item.origin.weekStart]
-                        : [],
-                    ),
-                  );
-                  for (const week of weeks)
-                    next = {
-                      ...next,
-                      shopping: reconcileWeekShopping(next, week).shopping,
+                inactive={Boolean(backupRequest)}
+                installAvailable={Boolean(installPrompt)}
+                onInstall={installApp}
+                onNutritionSettings={updateNutritionSettings}
+                onPantry={updatePantry}
+                onMealSlots={(enabledMealSlots) =>
+                  setData((current) => {
+                    if (!enabledMealSlots.length) return current;
+                    let next = {
+                      ...current,
+                      enabledMealSlots: ALL_MEAL_SLOTS.filter((slot) =>
+                        enabledMealSlots.includes(slot),
+                      ),
                     };
-                  return next;
-                })
-              }
-              onSaveCustomFood={saveCustomFood}
-              showIosHint={
-                /iPad|iPhone|iPod/.test(navigator.userAgent) &&
-                !window.matchMedia('(display-mode: standalone)').matches
-              }
-              appUpdate={{ ...appUpdate, apply: applyAppUpdate }}
-              onRepairStandards={repairStandardRecipes}
-              onResetApp={resetApp}
-            />
-          )}
-          {backupRequest && !storageFailure && (
-            <BackupDialog
-              request={backupRequest}
-              onClose={() => {
-                restoreCandidate.current = undefined;
-                setBackupRequest(undefined);
-              }}
-              onSubmit={(password) =>
-                backupRequest.mode === 'create'
-                  ? createBackup(password)
-                  : inspectBackup(backupRequest.file, password)
-              }
-              onConfirmRestore={confirmRestore}
-            />
-          )}
-          {weekShoppingRequest && (
-            <WeekShoppingDialog
-              result={weekShoppingRequest}
-              onCancel={() => setWeekShoppingRequest(undefined)}
-              onConfirm={applyWeekShopping}
-            />
-          )}
-          {sharedRecipePreview && (
-            <SharedRecipeDialog
-              recipe={sharedRecipePreview.recipe}
-              image={sharedRecipePreview.image}
-              busy={sharedRecipeImportBusy}
-              onCancel={dismissSharedRecipe}
-              onConfirm={() => void confirmSharedRecipeImport()}
-            />
-          )}
-          {recipeImportError && (
-            <RecipeImportErrorDialog
-              message={recipeImportError}
-              onClose={dismissSharedRecipe}
-              onFile={importRecipeFile}
-            />
-          )}
-          {shareFallback && (
-            <RecipeShareFallback
-              recipe={shareFallback}
-              onClose={() => setShareFallback(undefined)}
-              onDownload={() => {
-                void exportRecipeFile(shareFallback);
-                setShareFallback(undefined);
-              }}
-              onLink={() => {
-                void shareRecipeLink(shareFallback);
-                setShareFallback(undefined);
-              }}
-            />
-          )}
-          {shareCopyText && (
-            <RecipeLinkDialog
-              text={shareCopyText}
-              onClose={() => setShareCopyText(undefined)}
-            />
-          )}
-          <div className="toast-stack" aria-label="Hinweise">
-            {pendingDeletion && (
-              <AppToast
-                message={
-                  pendingDeletion.removed.length === 1
-                    ? 'Rezept gelöscht'
-                    : `${pendingDeletion.removed.length} Rezepte gelöscht`
+                    const weeks = new Set(
+                      current.shopping.flatMap((item) =>
+                        item.origin.kind === 'week'
+                          ? [item.origin.weekStart]
+                          : [],
+                      ),
+                    );
+                    // Past weeks are done; current ones keep the range they
+                    // were built for, so already bought days stay off the list.
+                    const currentWeek = startOfLocalWeek(now);
+                    for (const week of weeks) {
+                      if (week < currentWeek) continue;
+                      next = {
+                        ...next,
+                        shopping: reconcileWeekShopping(
+                          next,
+                          week,
+                          storedShoppingRange(next.shopping, week) ?? {},
+                        ).shopping,
+                      };
+                    }
+                    return next;
+                  })
                 }
-                detail={
-                  pendingDeletion.removed.length === 1
-                    ? '10 Sekunden zum Wiederherstellen.'
-                    : 'Alle gemeinsam wiederherstellen · 10 Sekunden.'
+                onSaveCustomFood={saveCustomFood}
+                showIosHint={
+                  /iPad|iPhone|iPod/.test(navigator.userAgent) &&
+                  !window.matchMedia('(display-mode: standalone)').matches
                 }
-                key={pendingDeletion.cleanupTimer}
-                busy={undoBusy}
-                duration={10_000}
-                onUndo={() => void undoDeleteRecipe()}
-                onDismiss={finishRecipeDeletion}
+                appUpdate={{ ...appUpdate, apply: applyAppUpdate }}
+                onRepairStandards={repairStandardRecipes}
+                onResetApp={resetApp}
               />
             )}
-            {pendingShoppingDeletion && (
-              <AppToast
-                message={
-                  pendingShoppingDeletion.removed.length === 1
-                    ? 'Einkaufsartikel entfernt'
-                    : `${pendingShoppingDeletion.removed.length} Einkaufsartikel entfernt`
+            {backupRequest && !storageFailure && (
+              <BackupDialog
+                request={backupRequest}
+                onClose={() => {
+                  restoreCandidate.current = undefined;
+                  setBackupRequest(undefined);
+                }}
+                onSubmit={(password) =>
+                  backupRequest.mode === 'create'
+                    ? createBackup(password)
+                    : inspectBackup(backupRequest.file, password)
                 }
-                key={pendingShoppingDeletion.cleanupTimer}
-                duration={10_000}
-                onUndo={undoShoppingDeletion}
-                onDismiss={() => {
-                  window.clearTimeout(pendingShoppingDeletion.cleanupTimer);
-                  deletionTimers.current.delete(
-                    pendingShoppingDeletion.cleanupTimer,
-                  );
-                  setPendingShoppingDeletion(undefined);
+                onConfirmRestore={confirmRestore}
+              />
+            )}
+            {textImport && (
+              <RecipeTextImportSheet
+                initialText={textImport.text}
+                onClose={() => setTextImport(undefined)}
+                onCreate={createDraftFromText}
+              />
+            )}
+            {weekShoppingRequest && (
+              <WeekShoppingDialog
+                result={weekShoppingRequest.result}
+                options={weekShoppingRequest.options}
+                today={todayLocal(now)}
+                onRange={(options) =>
+                  openWeekShopping(
+                    weekShoppingRequest.result.preview.weekStart,
+                    options,
+                  )
+                }
+                onCancel={() => setWeekShoppingRequest(undefined)}
+                onConfirm={applyWeekShopping}
+              />
+            )}
+            {sharedRecipePreview && (
+              <SharedRecipeDialog
+                recipe={sharedRecipePreview.recipe}
+                image={sharedRecipePreview.image}
+                busy={sharedRecipeImportBusy}
+                onCancel={dismissSharedRecipe}
+                onConfirm={() => void confirmSharedRecipeImport()}
+              />
+            )}
+            {recipeImportError && (
+              <RecipeImportErrorDialog
+                message={recipeImportError}
+                onClose={dismissSharedRecipe}
+                onFile={importRecipeFile}
+              />
+            )}
+            {shareFallback && (
+              <RecipeShareFallback
+                recipe={shareFallback}
+                onClose={() => setShareFallback(undefined)}
+                onDownload={() => {
+                  void exportRecipeFile(shareFallback);
+                  setShareFallback(undefined);
+                }}
+                onLink={() => {
+                  void shareRecipeLink(shareFallback);
+                  setShareFallback(undefined);
                 }}
               />
             )}
-            {pendingPlanUndo && (
-              <AppToast
-                key={pendingPlanUndo.timer}
-                message={pendingPlanUndo.message}
-                duration={8_000}
-                onUndo={undoPlanChanges}
-                onDismiss={clearPlanUndo}
+            {shareCopyText && (
+              <RecipeLinkDialog
+                text={shareCopyText}
+                onClose={() => setShareCopyText(undefined)}
               />
             )}
-            {toast && (
-              <AppToast
-                key={toast.id}
-                message={toast.message}
-                tone={toast.tone}
-                duration={toast.duration}
-                onDismiss={() => {
-                  if (toastTimer.current)
-                    window.clearTimeout(toastTimer.current);
-                  setToast(undefined);
-                }}
-              />
-            )}
-          </div>
-        </main>
-      </div>
+            <div className="toast-stack" aria-label="Hinweise">
+              {pendingDeletion && (
+                <AppToast
+                  message={
+                    pendingDeletion.removed.length === 1
+                      ? 'Rezept gelöscht'
+                      : `${pendingDeletion.removed.length} Rezepte gelöscht`
+                  }
+                  detail={
+                    pendingDeletion.removed.length === 1
+                      ? '10 Sekunden zum Wiederherstellen.'
+                      : 'Alle gemeinsam wiederherstellen · 10 Sekunden.'
+                  }
+                  key={pendingDeletion.cleanupTimer}
+                  busy={undoBusy}
+                  duration={10_000}
+                  onUndo={() => void undoDeleteRecipe()}
+                  onDismiss={finishRecipeDeletion}
+                />
+              )}
+              {pendingShoppingDeletion && (
+                <AppToast
+                  message={
+                    pendingShoppingDeletion.removed.length === 1
+                      ? 'Einkaufsartikel entfernt'
+                      : `${pendingShoppingDeletion.removed.length} Einkaufsartikel entfernt`
+                  }
+                  key={pendingShoppingDeletion.cleanupTimer}
+                  duration={10_000}
+                  onUndo={undoShoppingDeletion}
+                  onDismiss={() => {
+                    window.clearTimeout(pendingShoppingDeletion.cleanupTimer);
+                    deletionTimers.current.delete(
+                      pendingShoppingDeletion.cleanupTimer,
+                    );
+                    setPendingShoppingDeletion(undefined);
+                  }}
+                />
+              )}
+              {pendingPlanUndo && (
+                <AppToast
+                  key={pendingPlanUndo.timer}
+                  message={pendingPlanUndo.message}
+                  duration={8_000}
+                  onUndo={undoPlanChanges}
+                  onDismiss={clearPlanUndo}
+                />
+              )}
+              {toast && (
+                <AppToast
+                  key={toast.id}
+                  message={toast.message}
+                  tone={toast.tone}
+                  duration={toast.duration}
+                  onDismiss={() => {
+                    if (toastTimer.current)
+                      window.clearTimeout(toastTimer.current);
+                    setToast(undefined);
+                  }}
+                />
+              )}
+            </div>
+          </main>
+        </div>
+      </RecipeNutritionContext.Provider>
       {storageRecovery}
     </RecipeImageRequestContext.Provider>
   );
