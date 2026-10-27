@@ -275,6 +275,7 @@ const shortDate = new Intl.DateTimeFormat('de-DE', {
   month: 'short',
 });
 const fromIso = parseLocalDate;
+const nowIso = () => new Date().toISOString();
 const recipeShareBaseUrl = () =>
   new URL(import.meta.env.BASE_URL, window.location.origin).href;
 const sharePreparationMessage = (error: unknown) =>
@@ -2556,7 +2557,7 @@ function RecipeEditor({
   const unitRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const foodInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [ingredientAnnouncement, setIngredientAnnouncement] = useState('');
-  const createdAt = useRef(savedDraft?.createdAt ?? new Date().toISOString());
+  const [createdAt] = useState(() => savedDraft?.createdAt ?? nowIso());
   const autosaveCallbacks = useRef({ onAutosave, onDiscardDraft });
   autosaveCallbacks.current = { onAutosave, onDiscardDraft };
   const addIngredientAndFocus = () => {
@@ -2605,10 +2606,10 @@ function RecipeEditor({
           : undefined,
       ...(recipe ? { baseRecipeId: recipe.id } : {}),
       foodOverrides: draftFoodOverrides,
-      createdAt: createdAt.current,
+      createdAt,
       updatedAt: timestamp,
     };
-  }, [draft, draftFoodOverrides, proteinPerServing, recipe]);
+  }, [createdAt, draft, draftFoodOverrides, proteinPerServing, recipe]);
   const requestClose = async () => {
     if (discardOpen) {
       setDiscardOpen(false);
@@ -2910,7 +2911,7 @@ function RecipeEditor({
                       ? {
                           wholeRecipe: existingNutrients,
                           enteredAs: 'per-serving',
-                          updatedAt: new Date().toISOString(),
+                          updatedAt: nowIso(),
                         }
                       : undefined,
                 },
