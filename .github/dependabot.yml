@@ -4,6 +4,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
     groups:
       github-actions:
         patterns:
@@ -12,6 +15,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
     groups:
       production-minor-patch:
         dependency-type: production
@@ -23,6 +29,10 @@ updates:
         update-types:
           - minor
           - patch
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
     ignore:
       - dependency-name: "@types/node"
         update-types:
